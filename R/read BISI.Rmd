@@ -1,0 +1,309 @@
+---
+output:
+  word_document:
+    reference_docx: ../MPFF report template v1.1.dotx
+---
+
+
+```{r setup, include=FALSE}
+# ==========================================================================================================
+# Read BISI
+# 
+# 07/04/2025 first coding
+# ==========================================================================================================
+
+knitr::opts_chunk$set(echo = FALSE,	message = FALSE,	warning = FALSE,	comment = "",	crop = TRUE )
+knitr::opts_chunk$set(fig.width=10) 
+
+options(dplyr.summarise.inform = FALSE)
+
+# Reset lists
+rm(list=ls())
+
+# Libraries
+library(rmarkdown)                   # note: requires knitr 1.21
+
+require(tidyverse, quietly=TRUE)     # combined package of dplyr, tidyr, ggplot, readr, purrr and tibble
+require(lubridate, quietly=TRUE)     # data handling
+require(reshape2, quietly=TRUE)      # reshaping data; e.g. cast
+require(RColorBrewer)                # colour schemes
+library(viridis)
+library(pander)
+library(readxl)
+
+# Source all the utils
+source("../../flyshoot/R/FLYSHOOT utils.r")
+
+datadir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/data/BISI"
+filename <- "BISI v3 Assessment Tool for the Dutch North Sea v021023 - MP.xlsx"
+
+df <- df2 <- data.frame(stringsAsFactors = FALSE)
+ws <- "COE 2021"
+ws <- "FF 2021"
+ws <- "OCMu 2021"
+myws <- readxl::excel_sheets(file.path(datadir, filename))
+myws <- myws[!myws %in% c("Colophon", "Index", "Glossary + Refs","Manual")]
+
+
+for (ws in myws) {
+
+  print(ws)
+  
+  # read all the data in the worksheet
+  full_data <- readxl::read_excel(file.path(datadir, filename), sheet = ws, col_names = FALSE, .name_repair = "unique_quiet")
+  
+  # get the data blocks
+  full_df   <-
+    full_data %>% 
+    mutate(row=row_number()) %>% 
+    relocate(row) %>% 
+    pivot_longer(names_to = "col", values_to = "value", 2:ncol(.)) %>% 
+    mutate(col=as.integer(gsub("...","", col))) %>% 
+    filter(value == "Indicator species") %>% 
+    mutate(id = row_number()) %>% 
+    relocate(id)
+  
+  # @@ TO DO: specify the colstart, colend, rowstart and rowend of each data block
+  
+  # get column regions
+  mycols <-
+    readxl::read_excel(file.path(datadir, filename), sheet = ws,
+                       col_names=FALSE,
+                       range= readxl::cell_rows(1:1),
+                       .name_repair = "unique_quiet")  %>% 
+    tidyr::pivot_longer(values_to="tmp", cols=c(1:ncol(.))) %>% 
+    mutate(col_start = row_number()) %>% 
+    filter(grepl("Evaluation on basis|ivi|IISi|VarianceIIS", tmp)) %>% 
+    mutate(name = ws) %>% 
+    mutate(var = case_when(
+      grepl("Evaluation", tmp)  ~ "general",
+      grepl("ivi", tmp)         ~ "indication value",
+      grepl("IISi", tmp)        ~ "BISI",
+      grepl("VarianceIIS", tmp) ~ "BISI variance",
+      TRUE                           ~ "error"
+    )) %>% 
+    mutate(col_end = lead(col_start-1)) %>% 
+    mutate(col_end = ifelse(is.na(col_end), col_start+lag(col_end)- lag(col_start), col_end))
+  
+  # get row regions
+  myrows1 <-
+    readxl::read_excel(file.path(datadir, filename), sheet = ws,
+                       col_names=FALSE,
+                       range= readxl::cell_cols(1:1),
+                       .name_repair = "unique_quiet")  %>% 
+    setNames("tmp") %>% 
+    mutate(row_start = row_number()) %>% 
+    filter(grepl("Indicator species|Indicator soorten|Average IV|Number of species|BISI", tmp)) %>% 
+    mutate(tmp       = ifelse(grepl("Indicator", tmp), "Indicator species", tmp)) %>% 
+    mutate(name      = ws) %>% 
+    mutate(group     = ifelse(tmp=="Indicator species", 1,0)) %>% 
+    mutate(row_start = ifelse(tmp == "Indicator species", row_start+1, row_start)) %>% 
+    mutate(row_end   = ifelse(tmp == "Indicator species", lead(row_start)-1, row_start)) %>% 
+    mutate(id        = cumsum(group)) %>% 
+    dplyr::select(-group)
+  
+  myrows2 <- data.frame(stringsAsFactors = FALSE)
+  for (myid in unique(myrows1$id)) {
+      # myrows1 %>% 
+      # filter(id==myid, tmp == "Indicator species") %>% 
+      # as.data.frame() %>% 
+      # bind_rows(myrows2) %>% 
+      # print()
+    
+      myrows2 <-
+        bind_rows(
+        myrows2,
+        myrows1 %>%
+          filter(., id == myid, tmp == "Indicator species") %>% 
+          mutate(
+            data = row_start - 4,
+            year = row_start - 3,
+            area = row_start - 2) %>% 
+          dplyr::select(-tmp, -row_start, -row_end) %>% 
+          tidyr::pivot_longer(names_to = "tmp", values_to = "row_start", data:area) %>% 
+          mutate(row_end = row_start)
+      )
+  }
+  
+  myrows <-
+    bind_rows(
+      myrows1,
+      myrows2
+    ) %>% 
+    arrange(id, row_start)
+
+  
+  # get first column data  
+  myid <- 1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+  for (myid in unique(myrows$id)) {
+    
+    col_start <- min(mycols$col_start)  
+    col_end   <- col_start
+    
+    # get data description
+    mydata    <- full_data %>% 
+      filter(row_number() >= (myrows %>% filter(tmp =="data", id==myid) %>% dplyr::pull(row_start)), 
+             row_number() <= (myrows %>% filter(tmp =="data", id==myid) %>% dplyr::pull(row_end))) %>% 
+      dplyr::select(any_of(col_start)) %>% 
+      dplyr::pull(1)
+
+    # get area description
+    myarea    <- full_data %>% 
+      filter(row_number() >= (myrows %>% filter(tmp =="area", id==myid) %>% dplyr::pull(row_start)), 
+             row_number() <= (myrows %>% filter(tmp =="area", id==myid) %>% dplyr::pull(row_end))) %>% 
+      dplyr::select(any_of(col_start)) %>% 
+      dplyr::pull(1)
+
+    # get year
+    myyear    <- full_data %>% 
+      filter(row_number() >= (myrows %>% filter(tmp =="year", id==myid) %>% dplyr::pull(row_start)), 
+             row_number() <= (myrows %>% filter(tmp =="year", id==myid) %>% dplyr::pull(row_end))) %>% 
+      dplyr::select(any_of(col_start)) %>% 
+      dplyr::pull(1)
+
+    row_start <- myrows %>% filter(tmp =="Indicator species", id==myid) %>% dplyr::pull(row_start)
+    row_end   <- myrows %>% filter(tmp =="Indicator species", id==myid) %>% dplyr::pull(row_end)
+    
+    myspecies <- 
+      full_data %>% 
+      filter(row_number() >= row_start, row_number() <= row_end) %>%
+      dplyr::select(any_of(col_start)) %>% 
+      setNames("species")
+    
+    # myvar <- "indication value"
+    # myvar <- "general"
+    for(myvar in c("general", "indication value", "BISI","BISI variance")) {
+      
+      # print(myvar)
+      
+  
+        col_start <- mycols %>% filter(var==myvar) %>% dplyr::pull(col_start) 
+        col_end   <- mycols %>% filter(var==myvar) %>% dplyr::pull(col_end)
+        
+        if(myvar == "general") {
+          row_start <- c(myrows %>% filter(tmp =="year", id==myid) %>% dplyr::pull(row_start),
+                         myrows %>% filter(tmp =="area", id==myid) %>% dplyr::pull(row_start))
+        } else {
+          row_start <- c(myrows %>% filter(tmp =="area", id==myid) %>% dplyr::pull(row_start))
+        }
+        
+        myheaders <-
+          full_data %>% 
+          filter(row_number() %in% row_start) %>% 
+          dplyr::select(all_of(col_start:col_end)) %>% 
+          {if (myvar == "general") {
+             #summarize(across(everything(), ~paste(.x, collapse = ", ")))    
+            dplyr::select(., -1) %>% 
+            summarise(., across(.cols = everything(), .fns = ~paste(.x, collapse = ", "))) %>% 
+            bind_cols(data.frame(species="species")) %>% 
+            relocate(species)
+          } else . }  %>% 
+          as.character() %>% 
+          make.unique() %>% 
+          gsub("NA, ","", .) %>%
+          gsub("Oi/Ri","Oi_Ri",.) %>% 
+          gsub("±stdev, NA.1","Oi_Ri stdev", .) %>% 
+          gsub("±stdev, NA","Oi stdev", .) %>% 
+          gsub(", NA","", .)
+      
+        # now select the data
+        row_start <- myrows %>% filter(tmp =="Indicator species", id==myid) %>% dplyr::pull(row_start)
+        row_end   <- myrows %>% filter(tmp =="Indicator species", id==myid) %>% dplyr::pull(row_end)
+        
+        mymatrix <-
+          full_data %>%
+          filter(row_number() >= row_start, row_number() <= row_end) %>% 
+          dplyr::select(., any_of(col_start:col_end)) %>% 
+          setNames(c(myheaders)) %>% 
+          
+          {if(myvar != "general"){bind_cols(., myspecies) } else {.}} %>%
+          {if(myvar != "general"){relocate(., species)} else {.}} %>%
+          
+          mutate(ws = ws, var = myvar, id=myid, data=mydata, area=myarea, year = myyear) %>% 
+          drop_na(species)
+        
+         
+        mydf <-
+          mymatrix %>% 
+          {if(myvar == "general") {
+            pivot_longer(., names_to = "variable", values_to = "value", any_of(myheaders[-1]))
+          } else {
+            pivot_longer(., names_to = "variable", values_to = "value", any_of(myheaders))
+          }} 
+
+       df <-
+         bind_rows(
+           df, 
+           mydf
+         ) 
+        
+       # print(head(mymatrix))  
+       
+       # now extract the summary data
+       row_start <- myrows %>% filter(tmp =="Average IV:", id==myid) %>% dplyr::pull(row_start)
+       row_end   <- myrows %>% filter(tmp =="BISI = exp((1/S)*∑(IVi*ln(Oi/Ri)))", id==myid) %>% dplyr::pull(row_end)
+
+        mymatrix2 <-
+          full_data %>% 
+          filter(row_number() >= row_start, row_number() <= row_end) %>% 
+          dplyr::select(., any_of(col_start:col_end)) %>% 
+          setNames(c(myheaders)) %>% 
+          bind_cols(result=c("average","nspecies","bisi")) %>% 
+          relocate(result) %>% 
+          mutate(ws = ws, var = myvar, id=myid, data=mydata, area=myarea, year = myyear) 
+
+        mydf2 <-
+          mymatrix2 %>% 
+          {if(myvar == "general") {
+            pivot_longer(., names_to = "variable", values_to = "value", any_of(myheaders[-1]))
+          } else {
+            pivot_longer(., names_to = "variable", values_to = "value", any_of(myheaders))
+          }} %>% 
+          {if(myvar == "general") {dplyr::select(., -2)} else {.}} %>% 
+          drop_na(value)
+       
+      df2 <-
+         bind_rows(
+           df2,
+           mydf2
+         ) 
+      
+    }
+  }
+}
+
+```
+
+
+```{r}
+
+df2 %>% 
+  filter(
+    variable == "General quality",
+    result   == "bisi",
+    var      == "BISI"
+  ) %>% 
+  mutate(value = as.numeric(value)) %>% 
+  # View() 
+  ggplot(aes(y=ws, x=value)) +
+  theme_publication() +
+  geom_bar(stat="identity") +
+  labs(title="BISI") +
+  facet_grid(year~., space="free_y", scales="free_y") 
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

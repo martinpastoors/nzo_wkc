@@ -1,0 +1,188 @@
+---
+output:
+  word_document:
+    reference_docx: ../MPFF report template v1.1.dotx
+---
+
+
+```{r setup, include=FALSE}
+
+# ==========================================================================================================
+# WECR visserij data
+# 
+# 15/10/2024 first coding
+# ==========================================================================================================
+
+knitr::opts_chunk$set(echo = FALSE,	message = FALSE,	warning = FALSE,	comment = "",	crop = TRUE )
+knitr::opts_chunk$set(fig.width=10) 
+
+options(dplyr.summarise.inform = FALSE)
+
+# Reset lists
+rm(list=ls())
+
+# Libraries
+library(rmarkdown)                   # note: requires knitr 1.21
+
+require(tidyverse, quietly=TRUE)     # combined package of dplyr, tidyr, ggplot, readr, purrr and tibble
+require(lubridate, quietly=TRUE)     # data handling
+require(reshape2, quietly=TRUE)      # reshaping data; e.g. cast
+require(RColorBrewer)                # colour schemes
+library(viridis)
+library(pander)
+
+# Source all the utils
+source("../../flyshoot/R/FLYSHOOT utils.r")
+
+datadir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/vragen/2024_aanvullende_beschermde_gebieden/data"
+filename <- "Data Martin Pastoors incl. inzet.xlsx"
+
+e <-
+  readxl::read_excel(file.path(datadir, filename), 
+                     col_names=TRUE, 
+                     sheet = "Tuig",
+                     # col_types="text",
+                     .name_repair =  ~make.names(., unique = TRUE))  %>% 
+  data.frame() %>% 
+  lowcase() %>% 
+  dplyr::select(., -contains("gem")) %>% 
+  tidyr::pivot_longer(names_to = "year", values_to = "value", contains("x")) %>% 
+  mutate(year = as.integer(gsub("x","", year))) %>% 
+  filter(year != 2023)
+
+# remainder of NCP
+e1 <-
+  e %>% 
+  filter(gebied %notin% c("Dutch Exclusive Economic Zone", "Totaal vloot type")) %>% 
+  group_by(fleettype, variabel, gear, year) %>% 
+  summarise(value = sum(value, na.rm=TRUE)) %>% 
+  left_join(filter(e, gebied %in% c("Dutch Exclusive Economic Zone")),
+            by=c("fleettype","variabel", "gear", "year")) %>% 
+  mutate(
+    value = value.y-value.x,
+    gebied = "NCP rest"
+  ) %>% 
+  dplyr::select(-value.x, -value.y)
+
+# outside of NCP
+e2 <-
+  e %>% 
+  filter(gebied %in% c("Dutch Exclusive Economic Zone")) %>% 
+  dplyr::select(-gebied) %>% 
+  left_join(filter(e, gebied %in% c("Totaal vloot type")),
+            by=c("fleettype","variabel", "gear", "year")) %>% 
+  mutate(
+    value = value.y-value.x,
+    gebied = "Buiten NCP"
+  ) %>% 
+  dplyr::select(-value.x, -value.y)
+
+# bruine bank
+e3 <-
+  e %>% 
+  filter(gebied %in% c("Bruine bank (noord)")) %>% 
+  dplyr::select(-gebied) %>% 
+  left_join(filter(e, gebied %in% c("Bruine Bank")),
+            by=c("fleettype","variabel", "gear", "year")) %>% 
+  mutate(
+    value = value.y-value.x,
+    gebied = "Bruine bank (zuid)"
+  ) %>% 
+  dplyr::select(-value.x, -value.y)
+
+e4 <-
+  e %>% 
+  filter(gebied %notin% c("Dutch Exclusive Economic Zone", "Totaal vloot type", "Bruine Bank")) %>% 
+  bind_rows(e1, e2, e3)
+
+# e %>% filter(gebied %in% c("Totaal vloot type")) %>% group_by(fleettype, variabel, gear) %>% summarise(value = sum(value, na.rm=TRUE)) %>% View()
+# e4                                               %>% group_by(fleettype, variabel, gear) %>% summarise(value = sum(value, na.rm=TRUE)) %>% View()
+
+
+c <-
+  readxl::read_excel(file.path(datadir, filename), 
+                     col_names=TRUE, 
+                     sheet = "Soort",
+                     # col_types="text",
+                     .name_repair =  ~make.names(., unique = TRUE))  %>% 
+  data.frame() %>% 
+  lowcase() %>% 
+  dplyr::select(., -contains("gem")) %>% 
+  tidyr::pivot_longer(names_to = "year", values_to = "value", contains("x")) %>% 
+  mutate(year = as.integer(gsub("x","", year))) 
+
+
+```
+
+
+**Fishing effort overview**
+
+By: Martin Pastoors
+
+Report generated: `r format(Sys.time(), '%d/%m/%Y')`
+
+
+
+
+```{r, echo=FALSE, fig.align="left", message=FALSE, warning=FALSE, fig.asp=1.3}
+myfleettype = "Cutter"
+mygear      = "Boomkor + varianten (TBB, SUM, PUL, PUK)"
+myvariabel  = c("inzet (visdagen)", "waarde vangst (1.000 euro)")
+
+t <-
+  e4 %>% 
+  filter(fleettype == myfleettype, gear==mygear, variabel %in% myvariabel) %>% 
+  mutate(gebied2 = fct_reorder(gebied, value, .desc=FALSE))
+
+colourcount = length(unique(t$gebied2))
+getPalette = colorRampPalette(brewer.pal(12, "Paired"))
+ 
+t %>%   
+  ggplot(aes(x=year, y=value, group=gebied2)) +
+  theme_publication() +
+  theme(
+    legend.position="right",
+    legend.direction = "vertical"
+  ) + 
+
+  geom_bar(aes(fill=gebied2), stat="identity") +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  labs(title = paste(myfleettype, mygearcontains)) +
+  facet_wrap(~variabel, scales = "free_y", ncol=1)
+
+t %>%   
+  ggplot(aes(x=year, y=value, group=gebied2)) +
+  theme_publication() +
+  theme(
+    legend.position="right",
+    legend.direction = "vertical"
+  ) + 
+
+  geom_bar(aes(fill=gebied2), stat="identity", position="fill") +
+  scale_fill_manual(values = getPalette(colourCount)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = paste(myfleettype, mygearcontains)) +
+  facet_wrap(~variabel, scales = "free_y", ncol=1)
+
+```
+
+
+```{r, echo=FALSE, fig.align="left", message=FALSE, warning=FALSE, fig.asp=1.3}
+t %>%   
+  filter(gebied %notin% c("Buiten NCP","NCP rest")) %>% 
+  
+  ggplot(aes(x=year, y=value, group=gebied2)) +
+  theme_publication() +
+  theme(
+    legend.position="right",
+    legend.direction = "vertical"
+  ) + 
+
+  geom_line(aes(colour=gebied2)) +
+  scale_colour_manual(values = getPalette(colourCount)) +
+  labs(title = paste(myfleettype, mygearcontains)) +
+  facet_wrap(~variabel, scales = "free_y", ncol=1)
+
+
+```
+

@@ -1,0 +1,82 @@
+---
+output:
+  word_document:
+    reference_docx: ../MPFF report template v1.1.dotx
+---
+
+
+```{r setup, include=FALSE}
+
+# ==========================================================================================================
+# Generate fishing effort overview
+# 
+# 20/8/2024 first coding
+# ==========================================================================================================
+
+knitr::opts_chunk$set(echo = FALSE,	message = FALSE,	warning = FALSE,	comment = "",	crop = TRUE )
+knitr::opts_chunk$set(fig.width=10) 
+
+options(dplyr.summarise.inform = FALSE)
+
+# Reset lists
+rm(list=ls())
+
+# Libraries
+library(rmarkdown)                   # note: requires knitr 1.21
+
+require(tidyverse, quietly=TRUE)     # combined package of dplyr, tidyr, ggplot, readr, purrr and tibble
+require(lubridate, quietly=TRUE)     # data handling
+require(reshape2, quietly=TRUE)      # reshaping data; e.g. cast
+require(RColorBrewer)                # colour schemes
+library(viridis)
+library(pander)
+library(png)
+
+# Source all the utils
+source("../../flyshoot/R/FLYSHOOT utils.r")
+
+datadir <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/vragen/2024_aanvullende_beschermde_gebieden/data"
+
+
+
+```
+
+
+**Fishing effort overview**
+
+By: Martin Pastoors
+
+Report generated: `r format(Sys.time(), '%d/%m/%Y')`
+
+
+```{r, echo=FALSE, fig.align="left", message=FALSE, warning=FALSE, cache=FALSE, out.height="20%", out.width="20%", fig.show="hold"}
+
+# knitr::include_graphics(c(file.path(datadir, "BT1_2018.png"),
+#                           file.path(datadir, "BT1_2019.png")))
+
+my_image <- readPNG(file.path(datadir, "Gemiddelde opbrengst - Tuig alle - Vissoort all - 2010-2019.png"))
+plot(x=c(-10,10), y=c(49,62), type='n', main="", xlab="x", ylab="y")
+rasterImage(my_image, 
+            xleft=-10, xright=10, ybottom=49, ytop=62)
+grid()
+
+
+
+
+library(cowplot)
+library(magick)
+
+my_plot <- 
+  ggplot(data    = iris, 
+         mapping = aes(x    = Sepal.Length, 
+                       fill = Species)) + 
+  geom_density(alpha = 0.7) # +
+  # theme_cowplot()
+
+# Example with PNG (for fun, the OP's avatar - I love the raccoon)
+ggdraw() +
+  draw_image(file.path(datadir, "Gemiddelde opbrengst - Tuig alle - Vissoort all - 2010-2019.png")) +
+  draw_plot(my_plot)
+
+```
+

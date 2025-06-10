@@ -1,0 +1,348 @@
+---
+output:
+  officedown::rdocx_document:
+    reference_docx: ../MPFF report template v1.1.dotx
+---
+
+
+```{r setup, include=FALSE}
+
+# output:
+#   word_document:
+#     reference_docx: ../MPFF report template v1.1.dotx
+
+# ==========================================================================================================
+# Read BISI BHT (Breed Habitat Type)
+# 
+# 07/05/2025 first coding
+# ==========================================================================================================
+
+knitr::opts_chunk$set(echo = FALSE,	message = FALSE,	warning = FALSE,	comment = "",	crop = TRUE )
+knitr::opts_chunk$set(fig.width=10) 
+# knitr::opts_chunk$set(set_table_properties(layout = "autofit"))
+
+options(dplyr.summarise.inform = FALSE)
+
+sf::sf_use_s2(FALSE)
+
+# Reset lists
+rm(list=ls())
+
+# Libraries
+library(rmarkdown)                   # note: requires knitr 1.21
+
+require(tidyverse, quietly=TRUE)     # combined package of dplyr, tidyr, ggplot, readr, purrr and tibble
+require(lubridate, quietly=TRUE)     # data handling
+require(reshape2, quietly=TRUE)      # reshaping data; e.g. cast
+require(RColorBrewer)                # colour schemes
+library(viridis)
+library(pander)
+library(readxl)
+library(patchwork)
+
+# Source all the utils
+source("../../flyshoot/R/FLYSHOOT utils.r")
+
+onedrive   <- "C:/DATA"
+load(file=paste(onedrive, "RDATA/world_mr_sf.RData", sep="/"))
+# load(file=paste(onedrive, "RDATA/eez_sf.RData", sep="/"))
+# load(file=paste(onedrive, "RDATA/eez_sf.RData", sep="/"))
+
+datadir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/data"
+rdatadir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/rdata"
+shapedir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/shapes"
+bisidir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/data/BISI"
+wserdir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/data/WSER"
+scenariodir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/scenarios"
+
+# load combined areas 
+jff_comb <- 
+  loadRData(file=file.path(rdatadir, "jff_comb_v1.2.RData")) %>% 
+  sf::st_make_valid()
+# sf::st_is_valid(jff_comb)
+
+# jff_comb %>% 
+#   filter(grepl("viss",SITE_NAME)) %>% 
+#   ggplot() +
+#   theme_publication() +
+#   geom_sf(aes(fill=SITE_NAME)) +
+#   geom_sf_text(aes(label=area_km2)) +
+#   geom_sf(data=world_mr_sf, fill="lightgray") +
+#   geom_sf(data=eez_sf, fill=NA, linetype="dashed") +
+#   coord_sf(xlim=c(5,6), ylim=c(53,54)) +
+#   facet_wrap(~SITE_NAME)
+
+# load NL EEZ
+load(file=file.path(rdatadir, "nl_eez_all.RData"))
+
+# library(graticule)
+# grid <- graticule(
+#   lon = seq(bb[1], bb[3], 0.0625),
+#   lat = seq(bb[2], bb[4], 0.03125)
+#   ) %>% 
+#   sf::st_as_sf() %>% 
+#   sf::st_transform(crs=4326) 
+
+# load Partiele Herziening gebieden
+load(file=file.path(rdatadir, "ph_natuur.RData"))
+load(file=file.path(rdatadir, "ph_windenergie.RData"))
+load(file=file.path(rdatadir, "ph_zandwinning.RData"))
+load(file=file.path(rdatadir, "ph_scheepvaart.RData"))
+load(file=file.path(rdatadir, "nlog.RData"))
+
+
+wsergebieden <- 
+  readxl::read_excel(file.path(wserdir, "WSER gebieden gecombineerd.xlsx"), col_names = TRUE) 
+
+wserextra <- readRDS(file.path(wserdir,"Selectie_EUROs.Rds")) %>% 
+  left_join(wsergebieden, by=c("gridID")) %>% 
+  sf::st_transform(crs=4326) %>% 
+  filter(!(gridID %in% c(27253, 27014, 27015) & gebied == "Voordelta"))
+
+wserextra %>%
+  ggplot() +
+  theme_publication() +
+  geom_sf(aes(fill=Breaks)) +
+  geom_sf(data=nl_eez_all, fill=NA, linewidth=0.1, colour="black") +
+  coord_sf(xlim=c(0,6), ylim=c(50,57))
+
+# load EUSeaMap NL 
+euseamap_nl <- 
+  loadRData(file=file.path(rdatadir, "euseamap_nl.RData")) %>% 
+    mutate(krm_ecotoop = case_when(
+      grepl("Infralittoral coarse sediment|Circalittoral coarse sediment", MSFD_BBHT)   ~ "Ondiep grof sediment",
+      grepl("Circalittoral mixed sediment"                               , MSFD_BBHT)   ~ "Ondiep grof sediment",
+      grepl("Offshore circalittoral coarse sediment"                     , MSFD_BBHT)   ~ "Diep grof sediment",
+      grepl("Offshore circalittoral mixed sediment"                      , MSFD_BBHT)   ~ "Diep grof sediment",
+      grepl("Circalittoral sand|Infralittoral sand"                      , MSFD_BBHT)   ~ "Ondiep zand",
+      grepl("Offshore circalittoral sand"                                , MSFD_BBHT)   ~ "Diep zand",
+      grepl("Infralittoral mud|Circalittoral mud"                        , MSFD_BBHT)   ~ "Ondiep slibrijk",
+      grepl("Offshore circalittoral mud"                                 , MSFD_BBHT)   ~ "Diep slibrijk",
+      TRUE                                                                              ~ "Overig"
+     )) %>% 
+  sf::st_make_valid() %>% 
+  sf::st_transform(crs=23031) %>%   
+  dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>% 
+  dplyr::mutate(area_ha = as.numeric(sf::st_area(.)/10000)) %>% 
+  sf::st_transform(crs=4326) 
+
+
+
+# Intersection between EUseamap and JFF_COMB gebieden
+jff_bht <-
+  sf::st_intersection(jff_comb, euseamap_nl) %>% 
+  
+  sf::st_transform(crs=23031) %>%   
+  dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>% 
+  dplyr::mutate(area_ha = as.numeric(sf::st_area(.)/10000)) %>% 
+  sf::st_transform(crs=4326) %>% 
+  dplyr::select(-OBJECTID) %>% 
+  tibble::rownames_to_column(var="OBJECTID") %>% 
+  mutate(OBJECTID = as.integer(OBJECTID)) %>% 
+  dplyr::select(OBJECTID, SITE_NAME, SITE_TYPE, SITE_REG, krm_ecotoop, MSFD_BBHT, EUNIScombD, area_km2, area_ha)
+
+
+# Intersection between PH_natuur and JFF_COMB gebieden
+tmp <- ph_natuur %>% 
+  filter(layer %in% c("KRM_20240822","Natuurbescherming")) %>% 
+  dplyr::select(Gebied, NAAM_N2K, TYPE, BESCHERMIN, geometry) %>% 
+  mutate(gebied = ifelse(!is.na(Gebied), Gebied, NAAM_N2K)) %>% 
+  mutate(bescherming = ifelse(!is.na(BESCHERMIN), BESCHERMIN, TYPE)) %>% 
+  dplyr::select(-Gebied, -NAAM_N2K, -TYPE, -BESCHERMIN)
+
+tmp2 <- 
+  tmp %>% 
+  filter(gebied == "Friese Front") %>% 
+  group_by(gebied) %>% 
+  summarize(geometry = sf::st_union(geometry)) %>% 
+  mutate(bescherming = "KRM + N2000")
+
+
+ph_natuur_bht <-
+  sf::st_intersection(bind_rows(tmp %>% filter(gebied != "Friese Front"), tmp2), 
+                      euseamap_nl) %>% 
+  
+  sf::st_transform(crs=23031) %>%   
+  dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>% 
+  sf::st_transform(crs=4326)  
+  # dplyr::select(-OBJECTID) %>% 
+  # tibble::rownames_to_column(var="OBJECTID") %>% 
+  # mutate(OBJECTID = as.integer(OBJECTID)) %>% 
+  # dplyr::select(OBJECTID, SITE_NAME, SITE_TYPE, SITE_REG, krm_ecotoop, MSFD_BBHT, EUNIScombD, area_km2, area_ha)
+
+# ph_natuur_bht %>%
+#   ggplot() +
+#   theme_publication() +
+#   # geom_sf(aes(fill=paste(gebied, bescherming)), linewidth=0.1, alpha=0.4) +
+#   geom_sf(aes(fill=krm_ecotoop), linewidth=0.1, alpha=0.4) +
+#   geom_sf(data=nl_eez_all, fill=NA, linewidth=0.1, colour="black") +
+#   coord_sf(xlim=c(bb[1],bb[3]), ylim=c(bb[2],bb[4]))
+
+
+
+# habitats in EEZ
+habitats_in_eez <-
+  euseamap_nl %>% 
+  sf::st_drop_geometry() %>%
+  group_by(krm_ecotoop) %>%
+  summarise(
+    area_km2 = sum(area_km2, na.rm=TRUE)
+  ) 
+
+# habitats reeds gesloten  
+habitats_reeds_beschermd <-
+  jff_bht %>% 
+  sf::st_drop_geometry() %>%
+  filter(SITE_REG %in% c("fishery restricted","fishery restriction proposed")) %>% 
+  group_by(krm_ecotoop) %>%
+  summarise(
+    area_km2 = sum(area_km2, na.rm=TRUE)
+  ) 
+
+# read scenario results: moved to the lower sections of the code
+
+  
+# set bounding boxes
+bb          <- sf::st_bbox(euseamap_nl)
+bb_gebieden <- readxl::read_excel(file.path(datadir, "gebieden.xlsx"), col_names = TRUE)
+
+```
+
+# JFF rapportage voor NZO
+
+28 mei 2025
+
+*Overzicht van visserijbeperkingen (geldend of reeds ingebracht) per habitattype*
+
+```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis'}
+
+
+tmp <-
+  jff_bht %>% 
+  sf::st_drop_geometry() %>%
+  mutate(SITE_REG = ifelse(SITE_REG %in% c("fishery restriction suggested"), "open", SITE_REG)) %>% 
+  mutate(SITE_REG = ifelse(SITE_REG %in% c("fishery restricted","fishery restriction proposed"), "visserij gesloten/in procedure", SITE_REG)) %>% 
+  group_by(SITE_REG, krm_ecotoop) %>%
+  summarise(
+    area_km2 = sum(area_km2, na.rm=TRUE)
+  ) %>%
+  group_by(krm_ecotoop) %>%
+  mutate(prop = area_km2 / sum(area_km2)) %>% 
+  mutate(prop = scales::percent(prop, accuracy=0.1)) %>% 
+  mutate(area_km2 = as.integer(area_km2)) 
+
+
+# tmp %>% 
+#   reshape2::dcast(SITE_REG ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("SITE_REG", "krm_ecotoop")) %>% 
+#   pander::pandoc.table(.,
+#                style = "simple",
+#                split.tables=400, 
+#                justify = "right",
+#                missing=".",
+#                round=c(0))
+
+# tmp %>% 
+#   reshape2::dcast(SITE_REG ~ krm_ecotoop, value.var = "prop") %>% 
+#   pander::pandoc.table(.,
+#                style = "simple",
+#                split.tables=400, 
+#                justify = "right",
+#                missing=".",
+#                round=c(0))
+
+ft <-
+  tmp %>% 
+  reshape2::dcast(SITE_REG ~ krm_ecotoop, value.var = "prop") %>% 
+  flextable::flextable() %>%
+  flextable::fontsize(size = 12, part = "all") %>% 
+  flextable::colformat_num(j=1, big.mark="") %>% 
+  flextable::bold(part="header", bold=TRUE) %>% 
+  flextable::bold(i=c(nrow(.data)), bold=TRUE) %>% 
+  flextable::align(j=1:2, align="right", part="all") %>% 
+  flextable::autofit() %>% 
+  flextable::fit_to_width(7.5)
+
+# png(filename=file.path(tablesdir, "haul overview by month.png"),
+#     width=9.3, height=2.7, units="in", res=300, bg="transparent")
+# plot(ft, fit = "fixed", just = "left")
+# dev.off()
+
+ft
+
+```
+
+\newpage
+
+```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+# habitats per natuurgebied
+
+tmp1 <-
+  euseamap_nl %>% 
+  sf::st_drop_geometry() %>%
+  group_by(krm_ecotoop) %>%
+  summarise(
+    area_km2 = sum(area_km2, na.rm=TRUE)
+  ) %>%
+  mutate(gebied = "EEZ")
+  
+tmp2 <-
+  ph_natuur_bht %>% 
+  sf::st_drop_geometry() %>%
+  group_by(gebied, krm_ecotoop) %>%
+  summarise(
+    area_km2 = sum(area_km2, na.rm=TRUE)
+  ) 
+
+tmp3 <-
+  tmp2 %>% 
+  group_by(krm_ecotoop) %>%
+  group_by(krm_ecotoop) %>%
+  summarise(
+    area_km2 = sum(area_km2, na.rm=TRUE)
+  ) %>%
+  mutate(gebied = "natuur") %>% 
+  bind_rows(tmp1) %>% 
+  pivot_wider(names_from = gebied, values_from = area_km2) %>% 
+  mutate(ZZZ_EEZ = EEZ - natuur) %>% 
+  dplyr::select(-EEZ, -natuur) %>% 
+  pivot_longer(names_to = "gebied", values_to = "area_km2", ZZZ_EEZ) %>% 
+  
+  bind_rows(tmp2) %>% 
+  group_by(krm_ecotoop) %>% 
+  mutate(prop = area_km2 / sum(area_km2)) %>% 
+  mutate(perc = scales::percent(prop, accuracy=0.1)) %>% 
+  mutate(area_km2 = as.integer(area_km2)) 
+
+ft <-
+  tmp3 %>% 
+  reshape2::dcast(gebied ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("gebied", "krm_ecotoop")) %>% 
+  flextable::flextable() %>%
+  flextable::fontsize(size = 12, part = "all") %>% 
+  flextable::colformat_num(j=1, big.mark="") %>% 
+  flextable::bold(part="header", bold=TRUE) %>% 
+  flextable::bold(i=c(nrow(.data)), bold=TRUE) %>% 
+  flextable::align(j=1:2, align="right", part="all") %>% 
+  flextable::autofit() %>% 
+  flextable::fit_to_width(7.5)
+
+ft
+
+# tmp3 %>% 
+#   reshape2::dcast(gebied ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("gebied", "krm_ecotoop")) %>% 
+#   pander::pandoc.table(.,
+#                style = "simple",
+#                split.tables=400, 
+#                justify = "right",
+#                missing=".",
+#                round=c(0))
+# 
+
+# tmp3 %>% 
+#   reshape2::dcast(gebied ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("gebied", "krm_ecotoop")) %>% 
+#   writexl::write_xlsx(., path=file.path(datadir, "habitat oppervlak per natuurgebied.xlsx"))
+
+# jff_comb %>% filter(grepl("Dogger", SITE_NAME)) %>% ggplot() + theme_publication() + geom_sf(aes(fill=SITE_NAME))
+
+```
+
