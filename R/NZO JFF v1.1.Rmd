@@ -1,13 +1,13 @@
 ---
 output:
-  officedown::rdocx_document:
+  word_document:
     reference_docx: ../MPFF report template v1.1.dotx
 ---
 
 
 ```{r setup, include=FALSE}
 # ==========================================================================================================
-# Read BISI BHT (Breed Habitat Type)
+# NZO JFF v1.1
 # 
 # 07/05/2025 first coding
 # ==========================================================================================================
@@ -47,11 +47,11 @@ rdatadir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen
 shapedir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/shapes"
 bisidir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/data/BISI"
 wserdir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/data/WSER"
-scenariodir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/scenarios/v1.2"
+scenariodir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/scenarios"
 
 # load combined areas 
 jff_comb <- 
-  loadRData(file=file.path(rdatadir, "jff_comb_v1.2.RData")) %>% 
+  loadRData(file=file.path(rdatadir, "jff_comb_v1.1.RData")) %>% 
   sf::st_make_valid()
 # sf::st_is_valid(jff_comb)
 
@@ -86,7 +86,7 @@ load(file=file.path(rdatadir, "nlog.RData"))
 
 # read the WSER gebieden
 wsergebieden <- 
-  readxl::read_excel(file.path(wserdir, "WSER gebieden gecombineerd v1.2.xlsx"), col_names = TRUE) 
+  readxl::read_excel(file.path(wserdir, "WSER gebieden gecombineerd.xlsx"), col_names = TRUE) 
 
 # load WSER grid
 wsergrid <- readRDS(file.path(wserdir,"grid.Rdata")) %>% 
@@ -94,20 +94,6 @@ wsergrid <- readRDS(file.path(wserdir,"grid.Rdata")) %>%
   sf::st_transform(crs=4326) %>% 
   filter(!(gridID %in% c(27253, 27014, 27015) & gebied == "Voordelta"))
 
-wsergebieden <- 
-  readxl::read_excel(file.path(wserdir, "WSER gebieden gecombineerd.xlsx"), col_names = TRUE) 
-
-wserextra <- readRDS(file.path(wserdir,"Selectie_EUROs.Rds")) %>% 
-  left_join(wsergebieden, by=c("gridID")) %>% 
-  sf::st_transform(crs=4326) %>% 
-  filter(!(gridID %in% c(27253, 27014, 27015) & gebied == "Voordelta"))
-
-# wserextra %>%
-#   ggplot() +
-#   theme_publication() +
-#   geom_sf(aes(fill=Breaks)) +
-#   geom_sf(data=nl_eez_all, fill=NA, linewidth=0.1, colour="black") +
-#   coord_sf(xlim=c(0,6), ylim=c(50,57))
 
 # load EUSeaMap NL 
 euseamap_nl <- 
@@ -179,17 +165,6 @@ ph_natuur_bht <-
 #   geom_sf(aes(fill=krm_ecotoop), linewidth=0.1, alpha=0.4) +
 #   geom_sf(data=nl_eez_all, fill=NA, linewidth=0.1, colour="black") +
 #   coord_sf(xlim=c(bb[1],bb[3]), ylim=c(bb[2],bb[4]))
-
-jff_wsergrid <-
-  sf::st_intersection(jff_comb, wsergrid) %>% 
-  
-  sf::st_transform(crs=23031) %>%   
-  dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>% 
-  sf::st_transform(crs=4326)  
-  # dplyr::select(-OBJECTID) %>% 
-  # tibble::rownames_to_column(var="OBJECTID") %>% 
-  # mutate(OBJECTID = as.integer(OBJECTID)) %>% 
-  # dplyr::select(OBJECTID, SITE_NAME, SITE_TYPE, SITE_REG, krm_ecotoop, MSFD_BBHT, EUNIScombD, area_km2, area_ha)
 
 
 # lees de BISI per monsterpunt  
@@ -365,30 +340,30 @@ wsergrid_bht <-
 # wsergrid_bht %>%   group_by(gridID) %>% summarise(n=n()) %>% filter(n>1) %>% View()
 # wsergrid_bht %>%   group_by(gridID) %>% filter(n()>1) %>% View()
 
-# wsergrid_bht %>%
+# wsergrid_bht %>% 
 #   ggplot() +
 #   theme_publication() +
 #   geom_sf(aes(fill=krm_ecotoop), linewidth=0.1, alpha=0.4) +
 #   geom_sf_text(aes(label=gridID), size=3) +
 #   geom_sf(data=jff_comb, fill=NA, linewidth=0.1, colour="black") +
-#   coord_sf(ylim=c(53,55), xlim=c(4,6))
+#   coord_sf(ylim=c(55,55.8), xlim=c(3,5)) 
 
 # export wsergrid_bht
-nm <- unique(wsergrid_bht$gebied)[5]
-for (nm in unique(wsergrid_bht$gebied)) {
-
-  t <-
-    wsergrid_bht %>%
-    sf::st_drop_geometry() %>%
-    dplyr::select(-gridID, -area_km2) %>%
-    filter(gebied == nm) %>%
-    dplyr::select(-gebied) %>%
-    arrange(kolom) %>%
-    tidyr::pivot_wider(names_from = kolom, values_from = krm_ecotoop) %>%
-    arrange(rij)
-
-  writexl::write_xlsx(t, path=file.path(wserdir, paste0("WSER gebieden",nm," v2.xlsx")))
-}
+# nm <- unique(wsergrid_bht$gebied)[5]
+# for (nm in unique(wsergrid_bht$gebied)) {
+#   
+#   t <- 
+#     wsergrid_bht %>% 
+#     sf::st_drop_geometry() %>%
+#     dplyr::select(-gridID, -area_km2) %>% 
+#     filter(gebied == nm) %>% 
+#     dplyr::select(-gebied) %>% 
+#     arrange(kolom) %>% 
+#     tidyr::pivot_wider(names_from = kolom, values_from = krm_ecotoop) %>% 
+#     arrange(rij)
+# 
+#   writexl::write_xlsx(t, path=file.path(wserdir, paste0("WSER gebieden",nm," v2.xlsx")))
+# }
 
 
 # Assign bisi_punt to wser grid
@@ -474,7 +449,7 @@ for (nm in unique(wsergrid_bht$gebied)) {
   }
 }
 names(listed_df) <- unique(wsergrid_bht$gebied)
-writexl::write_xlsx(listed_df, path=file.path(wserdir, "WSER gebieden met BISI scores v1.2.xlsx"))
+writexl::write_xlsx(listed_df, path=file.path(wserdir, "WSER gebieden met BISI scores.xlsx"))
 
 # wsergrid_bisi %>% group_by(objectID) %>% filter(meetobject_lokaalid == "NL80_NRDZE_0128") %>% 
 #   ggplot() + theme_publication() + geom_sf(aes(fill=krm_ecotoop))
@@ -830,7 +805,7 @@ theme(plot.margin = unit(c(0,0,0,0), "cm"))
 
 *Overzicht van gebieden, vakken en BISI waardes (2021, BISI algemeen)*
 
-```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+```{r, fig.asp=0.4, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
 g <- bb_gebieden$Naam[3]
 i <- 0 
@@ -870,7 +845,7 @@ for (g in bb_gebieden$Naam) {
 }
 
 p1 + p2 + p3 + p4 + p5 + p6 +
-plot_layout(ncol = 2, guides="collect") &
+plot_layout(nrow = 1, guides="collect") &
 theme(legend.position='bottom') &
 theme(plot.margin = unit(c(0,0,0,0), "cm")) 
 # print(p)
@@ -882,7 +857,7 @@ theme(plot.margin = unit(c(0,0,0,0), "cm"))
 
 *Overzicht van visserijbeperkingen (geldend of reeds ingebracht) per habitattype*
 
-```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis'}
+```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
 tmp <-
   jff_bht %>% 
@@ -899,23 +874,23 @@ tmp <-
   mutate(area_km2 = as.integer(area_km2)) 
 
 
-# tmp %>% 
-#   reshape2::dcast(SITE_REG ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("SITE_REG", "krm_ecotoop")) %>% 
-#   pander::pandoc.table(.,
-#                style = "simple",
-#                split.tables=400, 
-#                justify = "right",
-#                missing=".",
-#                round=c(0))
+tmp %>% 
+  reshape2::dcast(SITE_REG ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("SITE_REG", "krm_ecotoop")) %>% 
+  pander::pandoc.table(.,
+               style = "simple",
+               split.tables=400, 
+               justify = "right",
+               missing=".",
+               round=c(0))
 
-# tmp %>% 
-#   reshape2::dcast(SITE_REG ~ krm_ecotoop, value.var = "prop") %>% 
-#   pander::pandoc.table(.,
-#                style = "simple",
-#                split.tables=400, 
-#                justify = "right",
-#                missing=".",
-#                round=c(0))
+tmp %>% 
+  reshape2::dcast(SITE_REG ~ krm_ecotoop, value.var = "prop") %>% 
+  pander::pandoc.table(.,
+               style = "simple",
+               split.tables=400, 
+               justify = "right",
+               missing=".",
+               round=c(0))
 
 ft <-
   tmp %>% 
@@ -926,20 +901,19 @@ ft <-
   flextable::bold(part="header", bold=TRUE) %>% 
   flextable::bold(i=c(nrow(.data)), bold=TRUE) %>% 
   flextable::align(j=1:2, align="right", part="all") %>% 
-  flextable::autofit() %>% 
-  flextable::fit_to_width(7.5)
+  flextable::autofit()
 
 # png(filename=file.path(tablesdir, "haul overview by month.png"),
 #     width=9.3, height=2.7, units="in", res=300, bg="transparent")
 # plot(ft, fit = "fixed", just = "left")
 # dev.off()
 
-ft
+print(ft)
 
 
 ```
 
-```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis'}
+```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
 # habitats per natuurgebied
 
@@ -980,38 +954,21 @@ tmp3 <-
   mutate(perc = scales::percent(prop, accuracy=0.1)) %>% 
   mutate(area_km2 = as.integer(area_km2)) 
 
-ft <-
-  tmp3 %>% 
+tmp3 %>% 
   reshape2::dcast(gebied ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("gebied", "krm_ecotoop")) %>% 
-  flextable::flextable() %>%
-  flextable::fontsize(size = 12, part = "all") %>% 
-  flextable::colformat_num(j=1, big.mark="") %>% 
-  flextable::bold(part="header", bold=TRUE) %>% 
-  flextable::bold(i=c(nrow(.data)), bold=TRUE) %>% 
-  flextable::align(j=1:2, align="right", part="all") %>% 
-  flextable::autofit() %>% 
-  flextable::fit_to_width(7.5)
+  pander::pandoc.table(.,
+               style = "simple",
+               split.tables=400, 
+               justify = "right",
+               missing=".",
+               round=c(0))
 
-ft
-
-# tmp3 %>% 
-#   reshape2::dcast(gebied ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("gebied", "krm_ecotoop")) %>% 
-#   pander::pandoc.table(.,
-#                style = "simple",
-#                split.tables=400, 
-#                justify = "right",
-#                missing=".",
-#                round=c(0))
-# 
-
-# tmp3 %>% 
-#   reshape2::dcast(gebied ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("gebied", "krm_ecotoop")) %>% 
-#   writexl::write_xlsx(., path=file.path(datadir, "habitat oppervlak per natuurgebied.xlsx"))
-
+tmp3 %>% 
+  reshape2::dcast(gebied ~ krm_ecotoop, value.var = "area_km2", sum, margins=c("gebied", "krm_ecotoop")) %>% 
+  writexl::write_xlsx(., path=file.path(datadir, "habitat oppervlak per natuurgebied.xlsx"))
 # jff_comb %>% filter(grepl("Dogger", SITE_NAME)) %>% ggplot() + theme_publication() + geom_sf(aes(fill=SITE_NAME))
 
 ```
-
 \newpage
 
 *Oppervlak op het Friese Front*
@@ -1023,20 +980,20 @@ g <- bb_gebieden$Naam[4]
 xlim <- as.numeric(bb_gebieden[bb_gebieden$Naam == g,2:3])
 ylim <- as.numeric(bb_gebieden[bb_gebieden$Naam == g,4:5])
 
-jff_comb %>% 
-  # filter(area_km2 >= 20) %>% 
-  
+jff_bht %>% 
+  # sf::st_drop_geometry() %>% 
+  # group_by(SITE_NAME, SITE_REG, krm_ecotoop) %>% 
+  # summarise(
+  #   area_km2 = sum(area_km2, na.rm=TRUE)
+  # ) %>% 
+  # View()
+  filter(area_km2 >= 20) %>% 
   ggplot() +
     theme_publication() +
     geom_sf(data=jff_comb, fill=NA, linewidth=1, colour="black") +
     geom_sf(data = euseamap_nl, aes(fill=krm_ecotoop), linewidth=0.1, alpha=0.4) +
-    # geom_sf_text(aes(label=as.integer(area_km2))) +
-    geom_sf(data=wsergrid, fill=NA, colour="gray", linewidth=0.5) +
-    geom_sf_text(data=wserextra, aes(label=round(Value, digits=2)), size=4) +
-    # geom_sf_text(data=wsergrid, aes(label=as.integer(gridID)), size=4) +
-    # geom_sf_text(data=jff_wsergrid, aes(label=round(area_km2, digits=2)), size=4) +
-    # coord_sf(xlim=xlim, ylim=ylim)  
-    coord_sf(xlim=c(5, 5.7), ylim=c(53.6, 53.9))  
+    geom_sf_text(aes(label=as.integer(area_km2))) +
+    coord_sf(xlim=xlim, ylim=ylim)  
 
 
 
@@ -1076,7 +1033,7 @@ ggplot() +
 
 *Overzicht van gebieden en BISI waardes (2021, BISI algemeen, schaaf/video)*
 
-```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+```{r, fig.asp=0.4, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
 g <- bb_gebieden$Naam[3]
 i <- 0 
@@ -1116,7 +1073,7 @@ for (g in bb_gebieden$Naam) {
 }
 
 p1 + p2 + p3 + p4 + p5 + p6 + 
-plot_layout(ncol = 2, guides="collect") &
+plot_layout(nrow = 1, guides="collect") &
 theme(legend.position='bottom') &
 theme(plot.margin = unit(c(0,0,0,0), "cm")) 
 
@@ -1125,7 +1082,7 @@ theme(plot.margin = unit(c(0,0,0,0), "cm"))
 
 *Overzicht van gebieden, vakken en BISI waardes (2021, BISI algemeen)*
 
-```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+```{r, fig.asp=0.4, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
 g <- bb_gebieden$Naam[3]
 i <- 0 
@@ -1166,7 +1123,7 @@ for (g in bb_gebieden$Naam) {
 }
 
 p1 + p2 + p3 + p4 + p5 + p6 +
-plot_layout(ncol = 2, guides="collect") &
+plot_layout(nrow = 1, guides="collect") &
 theme(legend.position='bottom') &
 theme(plot.margin = unit(c(0,0,0,0), "cm")) 
 # print(p)
@@ -1176,7 +1133,7 @@ theme(plot.margin = unit(c(0,0,0,0), "cm"))
 
 *Overzicht van Sabellaria aantallen in gebieden (2021)*
 
-```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+```{r, fig.asp=0.4, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
 g <- bb_gebieden$Naam[3]
 i <- 0 
@@ -1217,7 +1174,7 @@ for (g in bb_gebieden$Naam) {
 }
 
 p1 + p2 + p3 + p4 + p5 + p6 +
-plot_layout(ncol = 2, guides="collect") &
+plot_layout(nrow = 1, guides="collect") &
 theme(legend.position='bottom') &
 theme(plot.margin = unit(c(0,0,0,0), "cm")) 
 # print(p)
@@ -1369,7 +1326,7 @@ for (s in scenario_list) {
         drop_na(value),
 
       # FF
-      readxl::read_excel(s, col_names = FALSE, sheet = "FF", range="A3:V28") %>%
+      readxl::read_excel(s, col_names = FALSE, sheet = "FF", range="A3:U28") %>%
         rownames_to_column(var="rij") %>%
         pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
         mutate(gebied = "Friese front") %>%
@@ -1606,5 +1563,3 @@ p1 / p2 +
   theme(plot.margin = unit(c(0,0,0,0.5), "cm")) 
 
 ```
-
-
