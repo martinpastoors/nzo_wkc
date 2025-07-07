@@ -854,14 +854,14 @@ ft
 
 *scenario maps*
 
-Van de JFF v1.1 scenario's, hebben we hier alleen de volgende scenario's herhaalt, ter vergelijking: 
+Van de JFF v1.1 scenario's, hebben we hier alleen de volgende scenario's herhaalt in JFF v1.2, ter vergelijking: 
 
 ```{r, fig.asp=0.8, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
 # read scenario results
 
 scenario_list <- list.files(path=file.path(paths[["scenariodir"]]), pattern=".xlsx", full.names = TRUE) 
-scenario_results <- scenario_results_habitats <- scenario_maps <- data.frame(stringsAsFactors = FALSE)
+scenario_results <- scenario_results_habitats <- scenario_surface <- scenario_maps <- data.frame(stringsAsFactors = FALSE)
 s <- scenario_list[1]
 i <- 0
 
@@ -976,12 +976,14 @@ for (s in scenario_list) {
   if (i == 1) scenario_results_habitats <- r else scenario_results_habitats <- bind_rows(scenario_results_habitats, r)
   
   if (i == 1) scenario_maps <- t4 else scenario_maps <- bind_rows(scenario_maps, t4)
+  
+  if (i == 1) scenario_surface <- t2 else scenario_surface <- bind_rows(scenario_surface, t2)
 
 }
 
 ```
 
-Dit zijn de drie scenario's op de kaart
+Dit zijn de scenario's op de kaart
 
 ```{r, fig.asp=0.8, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
 
@@ -992,6 +994,8 @@ t <-
   summarize(geometry = sf::st_union(geometry))
 
 t %>% 
+  filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
   ggplot() +
   theme_publication() +
   theme(legend.key.width=unit(1, "cm")) + 
@@ -1000,7 +1004,8 @@ t %>%
   geom_sf(fill="blue", colour="darkblue", alpha=0.5, linewidth=0.5) +
 
   coord_sf(xlim=c(bb[1],bb[3]), ylim=c(bb[2],bb[4])) +
-  facet_wrap(~scenario, nrow=1)
+  # coord_sf(xlim=c(bb[1],5), ylim=c(54,bb[4])) +
+  facet_wrap(~scenario2, nrow=1)
 
 
 ```
@@ -1016,6 +1021,10 @@ t %>%
 opbrengst <- 
   scenario_results %>% 
   filter(variabele == "waarde van de vangst") %>% 
+  
+  filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+
   filter(!is.na(value), value != 0) %>% 
   group_by(variabele, scenario, scenario2, gebied) %>%
   summarise(value = sum(value, na.rm=TRUE))
@@ -1023,6 +1032,10 @@ opbrengst <-
 bisi <-
   scenario_results %>% 
   filter(variabele == "bisiscore") %>% 
+  
+  filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+  
   filter(!is.na(value), value != 0) %>% 
   group_by(scenario, scenario2) %>% 
   summarise(
@@ -1034,6 +1047,10 @@ bisi <-
 oppervlak <-
   scenario_results %>% 
   filter(variabele == "oppervlak gesloten") %>% 
+  
+  filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+
   filter(!is.na(value), value != 0) %>% 
   group_by(variabele, scenario, scenario2, gebied) %>%
   summarise(value = sum(value, na.rm=TRUE))
@@ -1043,7 +1060,7 @@ bind_rows(opbrengst, oppervlak, bisi) %>%
   theme_publication() +
   # theme(legend.position = "right", legend.direction = "vertical") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  geom_bar(aes(x=scenario, y=value, fill=gebied), stat="identity") +
+  geom_bar(aes(x=scenario2, y=value, fill=gebied), stat="identity") +
   labs(x="", y="") +
   facet_wrap(~variabele, scale="free_y")
 
@@ -1161,5 +1178,35 @@ p1 / p2 +
   theme(legend.position='bottom') &
   theme(plot.margin = unit(c(0,0,0,0.5), "cm")) 
 
+```
+
+\newpage
+
+*scenario oppervlaktes en percentages*
+
+```{r, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+t <-
+  scenario_surface %>%
+  
+  filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+  
+  group_by(scenario2, scenario, gebied) %>% 
+  summarise(area_km2 = sum(value, na.rm=TRUE)) %>% 
+  group_by(scenario2, scenario) %>% 
+  mutate(perc = area_km2 / 712 ) %>% 
+  mutate(perc = scales::percent(perc, accuracy=1))  %>% 
+  filter(area_km2 > 0)
+
+t %>% 
+  pander::pandoc.table(.,
+               style = "simple",
+               split.tables=400,
+               justify = "right",
+               missing=".",
+               round=c(0))
+  
+  
 ```
 

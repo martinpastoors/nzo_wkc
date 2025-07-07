@@ -1249,6 +1249,7 @@ ggplot() +
   theme_publication() +
   theme(legend.key.width=unit(1, "cm")) + 
   theme(legend.position = "right", legend.direction = "vertical") +
+  theme(panel.grid.major = element_blank()) +
   geom_sf(data=nl_eez_all, fill=NA) +
   geom_sf(data=jff_comb, fill=NA, colour="red", linewidth=0.5) +
   geom_sf(data=euseamap_nl, aes(fill=krm_ecotoop), alpha=0.5) +
@@ -1256,6 +1257,7 @@ ggplot() +
   geom_sf(data=bisi_punt %>% filter(bisi_type=="bisi_algemeen", year == 2021, bemonstering == "schaaf_video"), 
           aes(size=value), colour="blue") +
   geom_sf(data = wsergrid, fill=NA, colour="gray", linewidth=0.1, alpha=0.5) +
+  # geom_sf_text(data = wsergrid, aes(label=gridID), colour="gray20", size=3) +
 
   coord_sf(xlim=c(3.0,3.5), ylim=c(52.25,52.75)) +
   scale_size_continuous(range=c(0.5, 3)) +
