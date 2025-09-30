@@ -30,7 +30,7 @@ load(file=paste(onedrive, "RDATA/eez_sf.RData", sep="/"))
 nl_eez <- eez_sf %>% filter(ISO_TER1 == "NLD")
 bb <- sf::st_bbox(nl_eez)
 
-wserdir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-xx Fact Finding beschermde gebieden/data/WSER"
+wserdir  <- "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-05 Fact Finding beschermde gebieden/data/WSER"
 wsergrid <- readRDS(file.path(wserdir,"grid.Rdata"))
 
 # ================================================================================

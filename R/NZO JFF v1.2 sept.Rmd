@@ -1,0 +1,1102 @@
+---
+output:
+  officedown::rdocx_document:
+    reference_docx: ../MPFF report template v1.1.dotx
+---
+
+
+```{r setup, include=FALSE}
+# ====================================================================================================
+# NZO JFF v1.2 sept
+# 
+# 07/05/2025 first coding
+# 12/06/2025 adapted for original shape of Friese Front proposal
+# ====================================================================================================
+
+knitr::opts_chunk$set(echo = FALSE,	message = FALSE,	warning = FALSE,	comment = "",	crop = TRUE )
+knitr::opts_chunk$set(fig.width=6, dpi=600) 
+
+options(dplyr.summarise.inform = FALSE)
+
+sf::sf_use_s2(FALSE)
+
+# Reset lists
+rm(list=ls())
+
+# Libraries
+library(rmarkdown)                   # note: requires knitr 1.21
+
+require(tidyverse, quietly=TRUE)     # combined package of dplyr, tidyr, ggplot, readr, purrr and tibble
+require(lubridate, quietly=TRUE)     # data handling
+require(reshape2, quietly=TRUE)      # reshaping data; e.g. cast
+require(RColorBrewer)                # colour schemes
+library(viridis)
+library(pander)
+library(readxl)
+library(patchwork)
+library(sf)
+
+# Source all the utils
+source("../../flyshoot/R/FLYSHOOT utils.r")
+
+# Define your data paths
+paths <- list(
+  # onedrive = "C:/DATA",
+  onedrive = "C:/Users/MartinPastoors/OneDrive - Martin Pastoors/DATA",
+  datadir = "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-05 Fact Finding beschermde gebieden/data",
+  rdatadir = "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-05 Fact Finding beschermde gebieden/rdata",
+  bisidir = "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-05 Fact Finding beschermde gebieden/data/BISI",
+  wserdir = "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-05 Fact Finding beschermde gebieden/data/WSER",
+  shapedir = "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-05 Fact Finding beschermde gebieden/shapes",
+  scenariodir = "C:/Users/MartinPastoors/Martin Pastoors/NZO - General/WKC/adviezen/2025-05 Fact Finding beschermde gebieden/scenarios/v1.2 sept"
+)
+
+# Helper function to process BISI data
+process_bisi_data <- function(bisidir, verbose = TRUE) {
+  vcat <- function(...) if (verbose) cat(..., "\n")
+  
+  filename <- "BISI berekeningen per BHT tbv Fact Finding v2 MP.xlsx"
+  bisi_punt <- data.frame(stringsAsFactors = FALSE)
+  
+  myws <- readxl::excel_sheets(file.path(bisidir, filename))
+  myws <- myws[grepl("BISI per loc", myws)]
+  
+  for (i in seq_along(myws)) {
+    ws <- myws[i]
+    vcat("Processing BISI worksheet:", ws)
+    
+    # Read all data in the worksheet
+    full_data <- readxl::read_excel(
+      file.path(bisidir, filename), 
+      sheet = ws, 
+      col_names = FALSE, 
+      .name_repair = "unique_quiet"
+    )
+    
+    # Get start row
+    startrow <- full_data %>%
+      dplyr::select(1) %>%
+      setNames("tmp") %>%
+      mutate(row = row_number()) %>%
+      filter(tmp == "databundelcode") %>%
+      pull(row)
+    
+    # Get the data block
+    df <- full_data %>%
+      filter(row_number() >= startrow) %>%
+      janitor::row_to_names(row_number = 1) %>%
+      janitor::clean_names() %>%
+      dplyr::select(any_of(c(
+        "databundelcode", "monsterophaaldatum", "year",
+        "geometriepunt_x", "geometriepunt_y", "meetobject_lokaalid",
+        "grootheid_code", "eenheid_code", "bemonsteringsapparaat_omschrijving",
+        "recordnr_monster", "bemonsterings_techniek", "gebied_code_ecoauthor",
+        "krm_zone", "beoor_deling_at", "beoor_deling_at_asev", "krm_ecotoop",
+        "hr_habitat_sub_type", "bis_ii_algemeen", "bis_ii_fysiek", "sabellaria_spp"
+      ))) %>%
+      drop_na(databundelcode) %>%
+      rename(
+        lat = geometriepunt_y, 
+        lon = geometriepunt_x, 
+        bisi_algemeen = bis_ii_algemeen, 
+        bisi_fysiek = bis_ii_fysiek
+      ) %>%
+      mutate(across(c("lat", "lon", "bisi_algemeen", "bisi_fysiek", "sabellaria_spp"), as.numeric)) %>%
+      mutate(across(c("year"), as.integer)) %>%
+      mutate(year = case_when(
+        year == 2014 ~ 2015,
+        year == 2019 ~ 2018,
+        year == 2017 ~ 2018,
+        TRUE ~ year
+      )) %>%
+      mutate(krm_ecotoop = case_when(
+        grepl("A5.13|A5.14", krm_ecotoop) ~ "Ondiep grof sediment",
+        grepl("A5.15", krm_ecotoop) ~ "Diep grof sediment",
+        grepl("A5.23|A5.24|A5.25|A5.26", krm_ecotoop) ~ "Ondiep zand",
+        grepl("A5.27", krm_ecotoop) ~ "Diep zand",
+        grepl("A5.33|A5.35", krm_ecotoop) ~ "Ondiep slibrijk",
+        grepl("A5.37", krm_ecotoop) ~ "Diep slibrijk",
+        TRUE ~ krm_ecotoop
+      )) %>%
+      tidyr::pivot_longer(
+        names_to = "bisi_type", 
+        values_to = "value", 
+        bisi_algemeen:bisi_fysiek
+      ) %>%
+      mutate(bemonstering = case_when(
+        bemonsteringsapparaat_omschrijving %in% c("Bodemschaaf", "Videocamera") ~ "schaaf_video",
+        bemonsteringsapparaat_omschrijving %in% c("Box-corer", "Zuigkor", "Hamon happer", "Van Veenhapper") ~ "boxcorer_happer",
+        TRUE ~ bemonsteringsapparaat_omschrijving
+      )) %>%
+      mutate(value2 = cut(value, breaks = seq(0, 0.7, 0.05))) %>%
+      sf::st_as_sf(coords = c("lon", "lat"), crs = 4326)
+    
+    if (i == 1) {
+      bisi_punt <- df
+    } else {
+      bisi_punt <- bind_rows(bisi_punt, df)
+    }
+  }
+  
+  return(bisi_punt)
+}
+
+# Helper function to process WSER BHT
+process_wser_bht <- function(wsergrid, euseamap_nl) {
+  wsergrid_bht_tmp <- sf::st_intersection(wsergrid, euseamap_nl) %>%
+    filter(!is.na(gebied)) %>%
+    sf::st_transform(crs = 23031) %>%
+    dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>%
+    sf::st_transform(crs = 4326) %>%
+    sf::st_drop_geometry() %>%
+    group_by(gridID, krm_ecotoop) %>%
+    summarise(area_km2 = sum(area_km2, na.rm = TRUE)) %>%
+    arrange(gridID, desc(area_km2)) %>%
+    group_by(gridID) %>%
+    dplyr::slice_head(n = 1)
+  
+  wsergrid_bht <- wsergrid %>%
+    left_join(wsergrid_bht_tmp, by = "gridID") %>%
+    drop_na(krm_ecotoop)
+  
+  return(wsergrid_bht)
+}
+
+# Helper function to process WSER BISI
+process_wser_bisi <- function(bisi_punt, wsergrid_bht) {
+  wsergrid_bisi <- bisi_punt %>%
+    mutate(objectID = sf::st_intersects(geometry, wsergrid_bht)) %>%
+    mutate(objectID = purrr::map_int(objectID, ~ if(length(.) > 0) .[1] else NA_integer_)) %>%
+    drop_na(objectID) %>%
+    group_by(bisi_type, bemonstering, year, objectID) %>%
+    summarise(
+      nobs = n(),
+      value = mean(value, na.rm = TRUE),
+      stdev = sd(value, na.rm = TRUE)
+    ) %>%
+    mutate(value2 = cut(value, breaks = seq(0, 0.7, 0.05))) %>%
+    sf::st_drop_geometry() %>%
+    left_join(
+      wsergrid_bht %>%
+        rownames_to_column(var = "objectID") %>%
+        mutate(objectID = as.integer(objectID)) %>%
+        dplyr::select(objectID, gridID, gebied, geometry),
+      by = "objectID"
+    ) %>%
+    sf::st_as_sf()
+  
+  return(wsergrid_bisi)
+}
+
+# Helper function to process natural area BISI
+process_natuurgebied_bisi <- function(bisi_punt, jff_bht) {
+  natuurgebied_bisi <- bisi_punt %>%
+    mutate(objectID = sf::st_intersects(geometry, jff_bht)) %>%
+    mutate(objectID = purrr::map_int(objectID, ~ if(length(.) > 0) .[1] else NA_integer_)) %>%
+    drop_na(objectID) %>%
+    group_by(bisi_type, bemonstering, year, objectID) %>%
+    summarise(
+      nobs = n(),
+      value = mean(value, na.rm = TRUE),
+      stdev = sd(value, na.rm = TRUE)
+    ) %>%
+    sf::st_drop_geometry() %>%
+    left_join(
+      jff_bht %>%
+        rownames_to_column(var = "objectID") %>%
+        mutate(objectID = as.integer(objectID)) %>%
+        dplyr::select(objectID, krm_ecotoop, SITE_NAME, SITE_REG, geometry),
+      by = "objectID"
+    ) %>%
+    sf::st_as_sf() %>%
+    sf::st_drop_geometry() %>%
+    group_by(bisi_type, bemonstering, year, SITE_NAME, SITE_REG) %>%
+    summarise(value = weighted.mean(value, nobs))
+  
+  return(natuurgebied_bisi)
+}
+
+#' Process Marine Spatial Data for Protected Areas Analysis
+#'
+#' This function either processes raw spatial data or loads previously processed results
+#' from RData files. It handles marine protected areas, BISI data, habitat mapping,
+#' and WSER grid data.
+#'
+#' @param process_data Logical. If TRUE, processes raw data. If FALSE, loads from RData files.
+#' @param data_paths List containing paths to data directories and files
+#' @param force_reprocess Logical. If TRUE, forces reprocessing even if RData files exist
+#' @param save_results Logical. If TRUE, saves processed results to RData files
+#' @param verbose Logical. If TRUE, prints processing status messages
+#'
+#' @return List containing all processed datasets
+#'
+#' @examples
+#' # Define data paths
+#' paths <- list(
+#'   onedrive = "C:/DATA",
+#'   datadir = "C:/Users/.../data",
+#'   rdatadir = "C:/Users/.../rdata",
+#'   bisidir = "C:/Users/.../data/BISI",
+#'   wserdir = "C:/Users/.../data/WSER"
+#' )
+#'
+#' # Process data
+#' results <- process_marine_data(process_data = TRUE, data_paths = paths)
+#'
+#' # Load previously processed data
+#' results <- process_marine_data(process_data = FALSE, data_paths = paths)
+
+process_marine_data <- function(process_data = TRUE, 
+                               data_paths = NULL, 
+                               force_reprocess = FALSE,
+                               save_results = TRUE,
+                               verbose = TRUE) {
+  
+  # Required libraries
+  required_packages <- c("sf", "dplyr", "readxl", "janitor", "tidyr", "purrr", "tibble")
+  
+  # Check and load required packages
+  for (pkg in required_packages) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      stop(paste("Package", pkg, "is required but not installed."))
+    }
+    library(pkg, character.only = TRUE)
+  }
+  
+  # Helper function for verbose output
+  vcat <- function(...) {
+    if (verbose) cat(..., "\n")
+  }
+  
+  # Helper function to load RData files
+  loadRData <- function(file_path) {
+    load(file_path)
+    return(get(ls()[ls() != "file_path"]))
+  }
+  
+  # Define default paths if not provided
+  if (is.null(data_paths)) {
+    stop("data_paths must be provided as a list containing required directory paths")
+  }
+  
+  # Extract paths
+  onedrive <- data_paths$onedrive
+  datadir <- data_paths$datadir
+  rdatadir <- data_paths$rdatadir
+  bisidir <- data_paths$bisidir
+  wserdir <- data_paths$wserdir
+  shapedir <- data_paths$shapedir
+  scenariodir <- data_paths$scenariodir
+  
+  # Define output file for processed results
+  processed_data_file <- file.path(rdatadir, "processed_marine_data.RData")
+  
+  # Check if we should load existing data
+  if (!process_data && !force_reprocess && file.exists(processed_data_file)) {
+    vcat("Loading previously processed data from:", processed_data_file)
+    load(processed_data_file)
+    return(processed_results)
+  }
+  
+  # Start data processing
+  vcat("Starting marine spatial data processing...")
+  
+  # Initialize results list
+  processed_results <- list()
+  
+  # Load base spatial data
+  vcat("Loading base spatial data...")
+  load(file.path(onedrive, "RDATA/world_mr_sf.RData"))
+  processed_results$world_mr_sf <- world_mr_sf
+  
+  # Load JFF combined areas
+  vcat("Loading JFF combined areas...")
+  jff_comb <- loadRData(file.path(rdatadir, "jff_comb_v1.2.RData")) %>% 
+    sf::st_make_valid()
+  processed_results$jff_comb <- jff_comb
+  
+  # Load NL EEZ
+  vcat("Loading NL EEZ data...")
+  load(file.path(rdatadir, "nl_eez_all.RData"))
+  processed_results$nl_eez_all <- nl_eez_all
+  
+  # Load Partiele Herziening gebieden
+  vcat("Loading Partiele Herziening areas...")
+  load(file.path(rdatadir, "ph_natuur.RData"))
+  load(file.path(rdatadir, "ph_windenergie.RData"))
+  load(file.path(rdatadir, "ph_zandwinning.RData"))
+  load(file.path(rdatadir, "ph_scheepvaart.RData"))
+  load(file.path(rdatadir, "nlog.RData"))
+  
+  processed_results$ph_natuur <- ph_natuur
+  processed_results$ph_windenergie <- ph_windenergie
+  processed_results$ph_zandwinning <- ph_zandwinning
+  processed_results$ph_scheepvaart <- ph_scheepvaart
+  processed_results$nlog <- nlog
+  
+  # Load WSER data
+  vcat("Loading WSER data...")
+  wsergebieden <- readxl::read_excel(
+    file.path(wserdir, "WSER gebieden gecombineerd v1.2.xlsx"), 
+    col_names = TRUE
+  )
+  
+  wsergrid <- readRDS(file.path(wserdir, "grid.Rdata")) %>% 
+    left_join(wsergebieden, by = "gridID") %>% 
+    sf::st_transform(crs = 4326) %>% 
+    filter(!(gridID %in% c(27253, 27014, 27015) & gebied == "Voordelta"))
+  
+  wserextra <- readRDS(file.path(wserdir, "Selectie_EUROs.Rds")) %>% 
+    left_join(wsergebieden, by = "gridID") %>% 
+    sf::st_transform(crs = 4326) %>% 
+    filter(!(gridID %in% c(27253, 27014, 27015) & gebied == "Voordelta"))
+  
+  processed_results$wsergebieden <- wsergebieden
+  processed_results$wsergrid <- wsergrid
+  processed_results$wserextra <- wserextra
+  
+  # Load and process EUSeaMap data
+  vcat("Processing EUSeaMap data...")
+  euseamap_nl <- loadRData(file.path(rdatadir, "euseamap_nl.RData")) %>%
+    mutate(krm_ecotoop = case_when(
+      grepl("Infralittoral coarse sediment|Circalittoral coarse sediment", MSFD_BBHT) ~ "Ondiep grof sediment",
+      grepl("Circalittoral mixed sediment", MSFD_BBHT) ~ "Ondiep grof sediment",
+      grepl("Offshore circalittoral coarse sediment", MSFD_BBHT) ~ "Diep grof sediment",
+      grepl("Offshore circalittoral mixed sediment", MSFD_BBHT) ~ "Diep grof sediment",
+      grepl("Circalittoral sand|Infralittoral sand", MSFD_BBHT) ~ "Ondiep zand",
+      grepl("Offshore circalittoral sand", MSFD_BBHT) ~ "Diep zand",
+      grepl("Infralittoral mud|Circalittoral mud", MSFD_BBHT) ~ "Ondiep slibrijk",
+      grepl("Offshore circalittoral mud", MSFD_BBHT) ~ "Diep slibrijk",
+      TRUE ~ "Overig"
+    )) %>% 
+    sf::st_make_valid() %>% 
+    sf::st_transform(crs = 23031) %>%   
+    dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>% 
+    dplyr::mutate(area_ha = as.numeric(sf::st_area(.)/10000)) %>% 
+    sf::st_transform(crs = 4326)
+  
+  processed_results$euseamap_nl <- euseamap_nl
+  
+  # Process JFF-BHT intersection
+  vcat("Processing JFF-BHT intersection...")
+  jff_bht <- sf::st_intersection(jff_comb, euseamap_nl) %>%
+    sf::st_transform(crs = 23031) %>%
+    dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>%
+    dplyr::mutate(area_ha = as.numeric(sf::st_area(.)/10000)) %>%
+    sf::st_transform(crs = 4326) %>%
+    dplyr::select(-OBJECTID) %>%
+    tibble::rownames_to_column(var = "OBJECTID") %>%
+    mutate(OBJECTID = as.integer(OBJECTID)) %>%
+    dplyr::select(OBJECTID, SITE_NAME, SITE_TYPE, SITE_REG, krm_ecotoop, MSFD_BBHT, EUNIScombD, area_km2, area_ha)
+  
+  processed_results$jff_bht <- jff_bht
+  
+  # Process PH_natuur-BHT intersection
+  vcat("Processing PH_natuur-BHT intersection...")
+  tmp <- ph_natuur %>%
+    filter(layer %in% c("KRM_20240822", "Natuurbescherming")) %>%
+    dplyr::select(Gebied, NAAM_N2K, TYPE, BESCHERMIN, geometry) %>%
+    mutate(gebied = ifelse(!is.na(Gebied), Gebied, NAAM_N2K)) %>%
+    mutate(bescherming = ifelse(!is.na(BESCHERMIN), BESCHERMIN, TYPE)) %>%
+    dplyr::select(-Gebied, -NAAM_N2K, -TYPE, -BESCHERMIN)
+  
+  tmp2 <- tmp %>%
+    filter(gebied == "Friese Front") %>%
+    group_by(gebied) %>%
+    summarize(geometry = sf::st_union(geometry)) %>%
+    mutate(bescherming = "KRM + N2000")
+  
+  ph_natuur_bht <- sf::st_intersection(
+    bind_rows(tmp %>% filter(gebied != "Friese Front"), tmp2),
+    euseamap_nl
+  ) %>%
+    sf::st_transform(crs = 23031) %>%
+    dplyr::mutate(area_km2 = as.numeric(sf::st_area(.)/1000000)) %>%
+    sf::st_transform(crs = 4326)
+  
+  processed_results$ph_natuur_bht <- ph_natuur_bht
+  
+  # Process BISI data
+  vcat("Processing BISI data...")
+  bisi_punt <- process_bisi_data(bisidir, verbose)
+  processed_results$bisi_punt <- bisi_punt
+  
+  # Process WSER grid with BHT
+  vcat("Processing WSER grid with BHT...")
+  wsergrid_bht <- process_wser_bht(wsergrid, euseamap_nl)
+  processed_results$wsergrid_bht <- wsergrid_bht
+  
+  # Process WSER grid with BISI
+  vcat("Processing WSER grid with BISI...")
+  wsergrid_bisi <- process_wser_bisi(bisi_punt, wsergrid_bht)
+  processed_results$wsergrid_bisi <- wsergrid_bisi
+  
+  # Process natural area BISI
+  vcat("Processing natural area BISI...")
+  natuurgebied_bisi <- process_natuurgebied_bisi(bisi_punt, jff_bht)
+  processed_results$natuurgebied_bisi <- natuurgebied_bisi
+  
+  # Load BISI trends
+  vcat("Loading BISI trends...")
+  bisi_trend_bht <- readxl::read_excel(
+    file.path(bisidir, "BISI trends T1 obv BISIv3 BHT.xlsx"), 
+    col_names = TRUE
+  ) %>%
+    janitor::clean_names()
+  
+  bisi_trend_mpa <- readxl::read_excel(
+    file.path(bisidir, "BISI trends T1 obv BISIv3 MPA.xlsx"), 
+    col_names = TRUE
+  ) %>%
+    janitor::clean_names()
+  
+  processed_results$bisi_trend_bht <- bisi_trend_bht
+  processed_results$bisi_trend_mpa <- bisi_trend_mpa
+  
+  # Calculate habitat summaries
+  vcat("Calculating habitat summaries...")
+  habitats_in_eez <- euseamap_nl %>%
+    sf::st_drop_geometry() %>%
+    group_by(krm_ecotoop) %>%
+    summarise(area_km2 = sum(area_km2, na.rm = TRUE))
+  
+  habitats_reeds_beschermd <- jff_bht %>%
+    sf::st_drop_geometry() %>%
+    filter(SITE_REG %in% c("fishery restricted", "fishery restriction proposed")) %>%
+    group_by(krm_ecotoop) %>%
+    summarise(area_km2 = sum(area_km2, na.rm = TRUE))
+  
+  processed_results$habitats_in_eez <- habitats_in_eez
+  processed_results$habitats_reeds_beschermd <- habitats_reeds_beschermd
+  
+  # Save results if requested
+  if (save_results) {
+    vcat("Saving processed results to:", processed_data_file)
+    save(processed_results, file = processed_data_file)
+  }
+  
+  vcat("Processing completed successfully!")
+  return(processed_results)
+}
+
+
+```
+
+```{r process_marine_data, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+
+# Process all data (first time)
+# results <- process_marine_data(process_data = TRUE, data_paths = paths)
+
+# Load previously processed data (subsequent times)
+results <- process_marine_data(process_data = FALSE, data_paths = paths)  
+
+# convert results list into constituent data.frames
+list2env(results, envir = .GlobalEnv)
+
+# set bounding boxes
+bb          <- sf::st_bbox(euseamap_nl)
+bb_gebieden <- readxl::read_excel(file.path(paths[["datadir"]], "gebieden.xlsx"), col_names = TRUE)
+bb_db       <- 
+  bb_gebieden %>% 
+  filter(grepl("Doggersbank", Naam)) %>% 
+  summarise(
+    xmin = min(xmin),
+    ymin = min(ymin),
+    xmax = max(xmax),
+    ymax = max(ymax)
+  )
+
+# for comparison: jff_comb_v1.1
+# jff_comb_v1.1 <- 
+#   loadRData(file=file.path(paths[["rdatadir"]], "jff_comb_v1.1.RData")) %>% 
+#   sf::st_make_valid()
+
+```
+
+
+# Scenario’s voor de Doggersbank o.b.v. JFF-rapportage v1.2 voor het NZO 
+
+29 september 2025
+
+Martin Pastoors
+
+De criteria voor de scenario’s zijn in het NZO afgesproken:
+
+*	0,8% in het noordoosten van de Doggersbank;
+*	een aaneengesloten gebied;
+*	binnen de grenzen van het N2000-gebied;
+*	hoge ecologische waarde o.b.v. de BISI-index uit de JFF;
+*	lage economische waarde o.b.v. de gegevens uit de JFF.
+
+Op basis van deze criteria zijn twee voorgestelde scenario’s gemaakt, hieronder scenario 10 en 11 genoemd. De volgende pagina’s tonen de scenario’s op kaart en de onderbouwing van de scenario’s met de gegevens uit de JFF.
+
+\newpage
+
+*Overzicht van de beschermde gebieden, WSER gridcellen en BISI waardes (2021, BISI algemeen)*
+
+
+```{r overzicht_gebieden, echo=FALSE, fig.asp=1.2, message=FALSE, warning=FALSE, comment=NA}
+
+# Tips van Claude:
+#   
+# * Pre-crop spatial data using st_crop() to the bounding box before plotting
+# * Remove the unnecessary loop entirely
+# * Reorder layers - put simpler/larger polygons first, complex point data last
+# * Add expand = FALSE to coord_sf() to avoid extra calculation
+# * Pre-filter the jff_comb data for restricted areas
+
+xlim <- c(bb_db$xmin, bb_db$xmax)
+ylim <- c(bb_db$ymin, bb_db$ymax)
+
+# Pre-filter data before plotting
+bisi_filtered <- bisi_punt %>% 
+  filter(bisi_type == "bisi_algemeen", year == 2021) %>%
+  st_crop(xmin = xlim[1], ymin = ylim[1], xmax = xlim[2], ymax = ylim[2])
+
+euseamap_cropped <- euseamap_nl %>%
+  st_crop(xmin = xlim[1], ymin = ylim[1], xmax = xlim[2], ymax = ylim[2])
+
+wsergrid_cropped <- wsergrid %>%
+  st_crop(xmin = xlim[1], ymin = ylim[1], xmax = xlim[2], ymax = ylim[2])
+
+jff_restricted <- jff_comb %>% 
+  filter(SITE_REG %in% c("fishery restricted", "fishery restriction proposed"))
+
+ggplot() +
+  theme_publication() +
+  geom_sf(data = euseamap_cropped, aes(fill = krm_ecotoop), 
+          linewidth = 0.1, alpha = 0.4) +
+  geom_sf(data = wsergrid_cropped, color = "gray50", 
+          fill = NA, linewidth = 0.1) +
+  geom_sf(data = ph_zandwinning, fill = "yellow", 
+          colour = "yellow", alpha = 0.5) +
+  geom_sf(data = ph_windenergie, fill = "green", 
+          colour = "green", alpha = 0.5) +
+  geom_sf(data = ph_scheepvaart, fill = "blue", 
+          colour = "blue", alpha = 0.5) +
+  geom_sf(data = jff_restricted, fill = "gray", alpha = 0.5) +
+  geom_sf(data = bisi_filtered, aes(colour = krm_ecotoop, size = value), 
+          alpha = 0.5, show.legend = FALSE) +
+  geom_sf(data = jff_comb, fill = NA, linewidth = 1, colour = "black") +
+  geom_sf(data = nl_eez_all, fill = NA) +
+  coord_sf(xlim = xlim, ylim = ylim, expand = FALSE) + 
+  labs(x = "", y = "") +
+  guides(fill = guide_legend(nrow = 2))
+
+
+# g <- bb_gebieden$Naam[3]
+
+# xlim <- c(bb_db$xmin, bb_db$xmax)
+# ylim <- c(bb_db$ymin, bb_db$ymax)
+# 
+# i <- 0 
+# for (g in bb_gebieden$Naam[5]) {
+#   
+#   
+#   i <- i + 1
+#   
+#   assign(paste0("p",i),
+#     bisi_punt %>% 
+#       filter(bisi_type=="bisi_algemeen", year==2021) %>% 
+#       ggplot() +
+#       theme_publication() +
+#       # geom_sf(data=world_mr_sf, fill=NA) +
+#       geom_sf(data = nl_eez_all, fill=NA) +
+#       geom_sf(data = jff_comb, fill=NA, linewidth=1, colour="black") +
+#       geom_sf(data = wsergrid, color = "gray50", fill=NA, linewidth=0.1) +
+#       # geom_sf_text(data = wsergrid, aes(label=gridID), color = "gray50", size=2) +
+#       geom_sf(data = euseamap_nl, aes(fill=krm_ecotoop), linewidth=0.1, alpha=0.4) +
+#       geom_sf(aes(colour=krm_ecotoop, size=value), alpha=0.5, show.legend = FALSE) +
+#       
+#       geom_sf(data = ph_zandwinning, fill="yellow", colour="yellow", alpha=0.5) +
+#       geom_sf(data = ph_windenergie, fill="green", colour="green", alpha=0.5) +
+#       geom_sf(data = ph_scheepvaart, fill="blue", colour="blue", alpha=0.5) +
+#       geom_sf(data = jff_comb %>% filter(SITE_REG %in% c("fishery restricted","fishery restriction proposed")), fill="gray", alpha=0.5) +
+#     
+#       # labs(title=paste("BISI algemeen /", g)) +
+#       # labs(title=paste(g)) +
+#       coord_sf(xlim=xlim, ylim=ylim) + 
+#       labs(x="", y="") +
+#       guides(fill = guide_legend(nrow = 2)) 
+#       # facet_wrap(~year, nrow=1)
+#   )
+#   
+# }
+
+# p1 + p2 + p3 + p4 + p5 + p6 +
+# p1 +
+# plot_layout(ncol = 1, guides="collect") &
+#   theme(legend.position='bottom') &
+#   theme(plot.margin = unit(c(0,0,0,0), "cm")) 
+# print(p)
+
+
+```
+
+\newpage
+
+*Overzicht van visserij (gemiddelde jaarlijkse opbrengst van aanlandingen door de kottervloot (alle tuigen) in de periode 2020-2023, waarde in Euro)*
+
+
+```{r overzicht_visserij, echo=FALSE, fig.asp=1.2, message=FALSE, warning=FALSE, comment=NA}
+
+scenario_list <- list.files(path=file.path(paths[["scenariodir"]]), pattern=".xlsx", full.names = TRUE) 
+s <- scenario_list[1]
+
+  # Fisheries (Euro)
+wser_euro <- 
+  bind_rows(
+    # BB
+    # readxl::read_excel(s, col_names = FALSE, sheet = "BB", range="A3:I18") %>%
+    #   rownames_to_column(var="rij") %>%
+    #   pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+    #   mutate(gebied = "Bruine bank") %>%
+    #   drop_na(value),
+
+    # DB
+    readxl::read_excel(s, col_names = FALSE, sheet = "EuroAllDB", range="A2:Y43") %>%
+      rownames_to_column(var="rij") %>%
+      pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+      mutate(gebied = "Doggersbank") %>%
+      drop_na(value),
+
+    # FF
+    # readxl::read_excel(s, col_names = FALSE, sheet = "FF", range="A3:V28") %>%
+    #   rownames_to_column(var="rij") %>%
+    #   pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+    #   mutate(gebied = "Friese front") %>%
+    #   drop_na(value),
+
+    # KB
+    # readxl::read_excel(s, col_names = FALSE, sheet = "KB", range="A2:J16") %>%
+    #   rownames_to_column(var="rij") %>%
+    #   pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+    #   mutate(gebied = "Klaverbank") %>%
+    #   drop_na(value),
+
+    # NzK
+    # readxl::read_excel(s, col_names = FALSE, sheet = "NzK", range="A2:AF32") %>% 
+    #   rownames_to_column(var="rij") %>% 
+    #   pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>% 
+    #   mutate(gebied = "Noordzee kustzone") %>% 
+    #   drop_na(value),
+    
+    # VvdR
+    # readxl::read_excel(s, col_names = FALSE, sheet = "VvdR", range="A3:E8") %>% 
+    #   rownames_to_column(var="rij") %>% 
+    #   pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>% 
+    #   mutate(gebied = "Vlakte van de Raan") %>% 
+    #   drop_na(value),
+    
+    # VD
+    # readxl::read_excel(s, col_names = FALSE, sheet = "VD", range="A2:N18") %>% 
+    #   rownames_to_column(var="rij") %>% 
+    #   pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>% 
+    #   mutate(gebied = "Voordelta") %>% 
+    #   drop_na(value)
+  ) %>% 
+  mutate(kolom = gsub("...","", kolom)) %>% 
+  mutate(across(.cols=c(rij, kolom), as.integer)) %>% 
+  filter(value != 0) %>% 
+  left_join(wsergrid, by=c("gebied", "rij","kolom")) %>% 
+  ungroup() %>% 
+  mutate(value2 = cut(value, breaks = seq(0, ceiling(max(value,na.rm=TRUE)), by=2))) %>%
+  sf::st_as_sf()
+
+
+xlim <- c(bb_db$xmin, bb_db$xmax)
+ylim <- c(bb_db$ymin, bb_db$ymax)
+  
+p1 <-
+  wser_euro %>% 
+  ggplot() +
+  theme_publication() +
+  # geom_sf(data=world_mr_sf, fill=NA) +
+  # geom_sf(data = nl_eez_all, fill=NA) +
+  # geom_sf(data = jff_comb, fill=NA, linewidth=1, colour="black") +
+  # geom_sf(data = wsergrid, color = "gray50", fill=NA, linewidth=0.1) +
+  # geom_sf_text(data = wsergrid, aes(label=gridID), color = "gray50", size=2) +
+  geom_sf(aes(fill=value2), alpha=0.5, show.legend = TRUE) +
+  
+  # geom_sf(data = jff_comb %>% filter(SITE_REG %in% c("fishery restricted","fishery restriction proposed")), fill="gray", alpha=0.5) +
+
+  # labs(title=paste("BISI algemeen /", g)) +
+  # labs(title=paste(g)) +
+  coord_sf(xlim=xlim, ylim=ylim) + 
+  labs(x="", y="") +
+  guides(fill = guide_legend(nrow = 1)) 
+
+p1 +
+  plot_layout(ncol = 1, guides="collect") &
+  theme(legend.position='bottom') &
+  theme(plot.margin = unit(c(0,0,0,0), "cm")) 
+# print(p)
+
+
+```
+
+
+```{r scenario_list, fig.asp=0.8, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+# read scenario results
+
+scenario_list <- list.files(path=file.path(paths[["scenariodir"]]), pattern=".xlsx", full.names = TRUE) 
+scenario_results <- scenario_results_habitats <- scenario_surface <- scenario_maps <- data.frame(stringsAsFactors = FALSE)
+s <- scenario_list[1]
+i <- 0
+
+for (s in scenario_list) {
+  
+  nm <- basename(s)  
+  
+  if (grepl("leeg", nm)) next
+  
+  i <- i + 1
+  # print(nm)
+  
+  # read summary: waarde van de vangst
+  t1 <- 
+    readxl::read_excel(s, col_names = TRUE, sheet = "Resultaat", range="B4:H11") %>% 
+    lowcase() %>% 
+    dplyr::select(-km2, -alletuigen) %>% 
+    tidyr::pivot_longer(names_to = "vloot", values_to = "value", boomkor:zegens) %>% 
+    mutate(variabele = "waarde van de vangst", scenario=gsub("Scenariotool v3","scenario", nm)) %>% 
+    mutate(scenario2=stringr::word(scenario, 1)) 
+
+  # read summary: krm ecotoop / opp
+  t2 <- 
+    readxl::read_excel(s, col_names = TRUE, sheet = "Resultaat", range="J4:Q11") %>% 
+    # lowcase() %>% 
+    rename(gebied=Gebied) %>% 
+    tidyr::pivot_longer(names_to = "krm_ecotoop", 
+                        values_to = "value", "Diep grof sediment":"Overig") %>% 
+    mutate(variabele = "oppervlak gesloten", scenario=gsub("Scenariotool v3","scenario", nm)) %>% 
+    mutate(scenario2=stringr::word(scenario, 1)) 
+
+  # read summary: bisi  
+  t3 <- 
+    readxl::read_excel(s, col_names = TRUE, sheet = "Resultaat", range="T4:V11") %>% 
+    lowcase() %>% 
+    tidyr::pivot_longer(names_to = "variabele", values_to = "value", bisiscore:nbisikwadranten) %>% 
+    mutate(scenario=gsub("Scenariotool v3","scenario", nm)) %>% 
+    mutate(scenario2=stringr::word(scenario, 1)) 
+
+  # open/closed per area
+  t4 <-
+    bind_rows(
+      # BB
+      readxl::read_excel(s, col_names = FALSE, sheet = "BB", range="A3:I18") %>%
+        rownames_to_column(var="rij") %>%
+        pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+        mutate(gebied = "Bruine bank") %>%
+        drop_na(value),
+
+      # DB
+      readxl::read_excel(s, col_names = FALSE, sheet = "DB", range="A2:Y43") %>%
+        rownames_to_column(var="rij") %>%
+        pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+        mutate(gebied = "Doggersbank") %>%
+        drop_na(value),
+
+      # FF
+      readxl::read_excel(s, col_names = FALSE, sheet = "FF", range="A3:V28") %>%
+        rownames_to_column(var="rij") %>%
+        pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+        mutate(gebied = "Friese front") %>%
+        drop_na(value),
+
+      # KB
+      readxl::read_excel(s, col_names = FALSE, sheet = "KB", range="A2:J16") %>%
+        rownames_to_column(var="rij") %>%
+        pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>%
+        mutate(gebied = "Klaverbank") %>%
+        drop_na(value),
+
+      # NzK
+      readxl::read_excel(s, col_names = FALSE, sheet = "NzK", range="A2:AF32") %>% 
+        rownames_to_column(var="rij") %>% 
+        pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>% 
+        mutate(gebied = "Noordzee kustzone") %>% 
+        drop_na(value),
+      
+      # VvdR
+      readxl::read_excel(s, col_names = FALSE, sheet = "VvdR", range="A3:E8") %>% 
+        rownames_to_column(var="rij") %>% 
+        pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>% 
+        mutate(gebied = "Vlakte van de Raan") %>% 
+        drop_na(value),
+      
+      # VD
+      readxl::read_excel(s, col_names = FALSE, sheet = "VD", range="A2:N18") %>% 
+        rownames_to_column(var="rij") %>% 
+        pivot_longer(names_to = "kolom", values_to = "value", 2:ncol(.)) %>% 
+        mutate(gebied = "Voordelta") %>% 
+        drop_na(value)
+    ) %>% 
+    mutate(scenario = nm) %>% 
+    mutate(kolom = gsub("...","", kolom)) %>% 
+    mutate(across(.cols=c(rij, kolom), as.integer)) %>% 
+    filter(value != 0) %>% 
+    mutate(scenario2=stringr::word(scenario, 1)) %>% 
+    left_join(wsergrid, by=c("gebied", "rij","kolom"))
+
+
+
+  r <-
+    t2 %>% 
+    group_by(krm_ecotoop) %>% 
+    summarise(value = sum(value, na.rm=TRUE)) %>% 
+    full_join(habitats_reeds_beschermd, by="krm_ecotoop") %>% 
+    mutate(value = area_km2 + value) %>% 
+    dplyr::select(-area_km2) %>% 
+    full_join(habitats_in_eez, by="krm_ecotoop") %>% 
+    mutate(prop_closed =  value / area_km2) %>% 
+    rename(area_closed_km2=value, area_eez_km2=area_km2) %>% 
+    mutate(scenario = nm) %>% 
+    mutate(scenario2=stringr::word(scenario, 1))
+  
+  scenario_results <-
+    bind_rows(scenario_results, t1, t2, t3)
+  
+  if (i == 1) scenario_results_habitats <- r else scenario_results_habitats <- bind_rows(scenario_results_habitats, r)
+  
+  if (i == 1) scenario_maps <- t4 else scenario_maps <- bind_rows(scenario_maps, t4)
+  
+  if (i == 1) scenario_surface <- t2 else scenario_surface <- bind_rows(scenario_surface, t2)
+
+}
+
+```
+
+\newpage
+
+Dit zijn de scenario's op de kaart:
+
+Scenario 10: 459 km2
+
+Scenario 11: 457 km2
+
+
+```{r scenario_kaart, fig.asp=0.8, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+t <- 
+  scenario_maps %>% 
+  group_by(scenario, scenario2) %>% 
+  sf::st_as_sf() %>%
+  summarize(geometry = sf::st_union(geometry))
+
+t %>% 
+  # filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  # mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+  ggplot() +
+  theme_publication() +
+  theme(legend.key.width=unit(1, "cm")) + 
+  geom_sf(data=nl_eez_all, fill=NA, inherit.aes = FALSE) +
+  geom_sf(data=jff_comb, fill=NA, colour="red", linewidth=0.5, inherit.aes = FALSE) +
+  geom_sf(fill="blue", colour="darkblue", alpha=0.5, linewidth=0.5) +
+
+  coord_sf(xlim=c(bb_db[[1]],bb_db[[3]]), ylim=c(bb_db[[2]],bb_db[[4]])) +
+  # coord_sf(xlim=c(bb[1],5), ylim=c(54,bb[4])) +
+  facet_wrap(~scenario2, nrow=1)
+
+
+```
+
+\newpage
+
+*scenario resultaten voor gemiddelde bisi score, gesloten oppervlak en waarde van de vangst*
+
+```{r scenario_resultaat, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+# per scenario en gebied
+
+opbrengst <- 
+  scenario_results %>% 
+  filter(variabele == "waarde van de vangst") %>% 
+  
+  # filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  # mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+
+  filter(!is.na(value), value != 0) %>% 
+  group_by(variabele, scenario, scenario2, gebied) %>%
+  summarise(value = sum(value, na.rm=TRUE))
+
+bisi <-
+  scenario_results %>% 
+  filter(variabele == "bisiscore") %>% 
+  
+  # filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  # mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+  
+  filter(!is.na(value), value != 0) %>% 
+  group_by(scenario, scenario2) %>% 
+  summarise(
+    value = mean(value, na.rm=TRUE), 
+    gebied = paste(gebied, collapse="_")
+  )  %>% 
+  mutate(variabele = "gem. BISI score")
+  
+oppervlak <-
+  scenario_results %>% 
+  filter(variabele == "oppervlak gesloten") %>% 
+  
+  # filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  # mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+
+  filter(!is.na(value), value != 0) %>% 
+  group_by(variabele, scenario, scenario2, gebied) %>%
+  summarise(value = sum(value, na.rm=TRUE))
+  
+bind_rows(opbrengst, oppervlak, bisi) %>% 
+  ggplot() +
+  theme_publication() +
+  # theme(legend.position = "right", legend.direction = "vertical") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_bar(aes(x=scenario2, y=value, fill=gebied), stat="identity") +
+  labs(x="", y="") +
+  facet_wrap(~variabele, scale="free_y", ncol=1)
+
+
+
+```
+
+\newpage
+
+*scenario resultaten voor de waarde van de vangst per vloot en oppervlak gesloten per habitat type*
+
+```{r scenario_resultaat2, fig.asp=0.8, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+# per scenario en vloot/habitat
+opbrengst <- 
+  scenario_results %>% 
+  filter(variabele == "waarde van de vangst") %>% 
+  filter(!is.na(value), value != 0) %>% 
+  group_by(variabele, scenario, vloot) %>%
+  summarise(value = sum(value, na.rm=TRUE))
+
+
+oppervlak <-
+  scenario_results %>% 
+  filter(variabele == "oppervlak gesloten") %>% 
+  filter(!is.na(value), value != 0) %>% 
+  group_by(variabele, scenario, krm_ecotoop) %>%
+  summarise(value = sum(value, na.rm=TRUE))
+  
+p1 <-
+  opbrengst %>% 
+  ggplot() +
+  theme_publication() +
+  theme(legend.position = "right", legend.direction = "vertical") +
+  # theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_bar(aes(x=scenario, y=value, fill=vloot), stat="identity") +
+  guides(fill = guide_legend(nrow = 2))  +
+  labs(x="", y="euro", title="waarde van de vangst") 
+
+p2 <-
+  oppervlak %>% 
+  ggplot() +
+  theme_publication() +
+  theme(legend.position = "right", legend.direction = "vertical") +
+  # theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_bar(aes(x=scenario, y=value, fill=krm_ecotoop), stat="identity") +
+  guides(fill = guide_legend(nrow = 2))  +
+  labs(x="", y="km2", title="habitat gesloten") 
+
+p1 + p2 +
+  plot_layout(ncol = 1) &
+  # plot_layout(ncol = 2, guides="collect") &
+  # theme(legend.position='bottom') &
+  theme(plot.margin = unit(c(0,0,0,0.5), "cm")) 
+
+
+
+
+```
+
+
+\newpage
+
+*scenario resultaten: oppervlak en percentage open en gesloten per habitat type*
+
+```{r scenario_opp, fig.asp=1.2, echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+
+
+p1 <-
+  scenario_results_habitats %>% 
+  mutate(area_open_km2 = area_eez_km2 - area_closed_km2) %>% 
+  dplyr::select(-area_eez_km2, -prop_closed) %>% 
+  tidyr::pivot_longer(names_to="variabele", values_to="value", c("area_open_km2", "area_closed_km2")) %>% 
+  mutate(variabele = factor(variabele, levels=c( "area_open_km2","area_closed_km2"))) %>% 
+  
+  ggplot() +
+  theme_publication() +
+  theme(legend.position = "right", legend.direction = "vertical") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_bar(aes(x=krm_ecotoop, y=value, fill=variabele), stat="identity") +
+  labs(x="", y="km2") +
+  facet_wrap(~scenario, nrow=1) +
+  theme(axis.text.x=element_blank()) 
+
+t <-
+  scenario_results_habitats %>% 
+  mutate(area_open_km2 = area_eez_km2 - area_closed_km2) %>% 
+  dplyr::select(-area_eez_km2, -prop_closed) %>% 
+  tidyr::pivot_longer(names_to="variabele", values_to="value", c("area_open_km2", "area_closed_km2")) %>% 
+  mutate(variabele = factor(variabele, levels=c( "area_open_km2","area_closed_km2"))) %>% 
+  group_by(scenario, scenario2, krm_ecotoop) %>% 
+  mutate(
+    prop_closed = value/sum(value),
+    mytext = ifelse(variabele == "area_closed_km2", sprintf("%1.0f%%", prop_closed*100), NA)
+  )
+
+p2 <-
+  t %>% 
+  ggplot() +
+  theme_publication() +
+  theme(legend.position = "right", legend.direction = "vertical") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_bar(aes(x=krm_ecotoop, y=value, fill=variabele), stat="identity", position="fill") +
+
+  scale_y_continuous(labels = scales::percent_format()) +
+  geom_hline(yintercept=0.1, colour="gray30") +
+  geom_text(data=t , 
+             aes(x=krm_ecotoop, y=prop_closed, label = mytext),
+            colour = "black", size = 3.5, nudge_y =  -0.05) +
+  labs(x="", y="percentage open/gesloten") +
+  facet_wrap(~scenario, nrow=1)
+
+p1 / p2 + 
+  plot_layout(guides="collect") &
+  theme(legend.position='right') &
+  theme(plot.margin = unit(c(0,0,0,0.5), "cm")) 
+
+```
+
+
+```{r eval=FALSE, fig.asp=1.2, message=FALSE, warning=FALSE, comment=NA, include=FALSE}
+
+t <-
+  scenario_surface %>%
+  
+  # filter(scenario2 %in% c("05", "06", "07", "10", "11")) %>%
+  # mutate(scenario2 = factor(scenario2, levels=c("06", "11", "05", "07", "10"))) %>% 
+  
+  group_by(scenario2, scenario, gebied) %>% 
+  summarise(area_km2 = sum(value, na.rm=TRUE)) %>% 
+  group_by(scenario2, scenario) %>% 
+  mutate(perc = area_km2 / 712 ) %>% 
+  mutate(perc = scales::percent(perc, accuracy=1))  %>% 
+  filter(area_km2 > 0)
+
+t %>% 
+  pander::pandoc.table(.,
+               style = "simple",
+               split.tables=400,
+               justify = "right",
+               missing=".",
+               round=c(0))
+  
+  
+```
+
